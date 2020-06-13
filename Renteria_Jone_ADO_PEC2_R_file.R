@@ -1,0 +1,589 @@
+
+# General data: 
+
+## PEC 2: análisis de datos de ultrasecuenciación
+## Jone Renteria
+## 29/5/2020
+
+# The script is as follows: 
+
+## Transforming the data to select the 30 samples:
+targets<-read.csv("targets.csv",sep = ",")
+counts<-read.csv("counts.csv",header = TRUE,sep = ";")
+counts$X<-gsub("\\..*", "", counts$X, fixed = FALSE)
+
+setwd(".")
+dir.create("results")
+dir.create("figures")
+
+library(dplyr)
+a<-split(targets,targets$Group)
+
+gen<-function(df){
+  set.seed(123)
+  
+  x<-as.data.frame(df[sample(nrow(df), 10),])
+  
+  return(x)
+  
+}
+
+gen(targets)
+l1<-lapply(a, gen)
+fin<-bind_rows(l1)
+
+library(tidyr)
+levels(fin$Sample_Name) <- gsub("-", ".", levels(fin$Sample_Name)) # nos hemos dado cuenta que en counts tienen puntos y en targets -  entonces hemos sustituido todo. 
+counts.long<-counts %>%
+  gather(Sample_Name,value,-X) %>%
+  left_join(fin,by="Sample_Name") %>%
+  filter(complete.cases(.))
+
+
+library(tibble) # for the column_to_rownames function
+
+counts.long2<-counts.long %>%
+  dplyr::select(X,value,SRA_Sample)
+
+counts.long3<-counts.long2 %>%
+  spread(SRA_Sample,value) %>% 
+  column_to_rownames(var="X") %>%
+  as.matrix()
+
+fin<- fin %>%
+  arrange(SRA_Sample)
+write.csv(fin,file = "./results/seleccion_targets.csv")
+
+all(as.vector(fin$SRA_Sample) == colnames(counts.long3))
+
+# DESeq2 object
+library(DESeq2)
+ddsMat <- DESeqDataSetFromMatrix(countData = counts.long3,
+                                 colData = fin,  
+                                 design = ~ Group)
+ddsMat
+### Preprocesado de los datos: filtraje y normalización
+
+#### Pre-filtrado del conjunto de datos
+ddsMat <- ddsMat[ rowSums(counts(ddsMat)) > 1, ]
+nrow(ddsMat)
+#### Transformación para estabilizar la varianza (vst) 
+vsd <- vst(ddsMat, blind = FALSE)
+head(assay(vsd), 3)
+colData(vsd)
+library(ggplot2)
+
+df <- bind_rows(
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"))
+
+colnames(df)[1:2] <- c("x", "y")  
+
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 250) +
+  coord_fixed() + facet_grid( . ~ transformation)  +
+  ggtitle("Transformación VST") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank())+
+  ggsave("./figures/Figure1_transf_vst.tiff",last_plot(),"tiff",dpi=200)
+
+rld <- rlog(ddsMat, blind = FALSE) # rlog transformation
+
+ddsMat <- estimateSizeFactors(ddsMat) # for the log2 transformation
+
+df <- bind_rows(
+  as_data_frame(log2(counts(ddsMat, normalized=TRUE)[, 1:2]+1)) %>%
+    mutate(transformation = "log2(x + 1)"),
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_data_frame(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+
+colnames(df)[1:2] <- c("x", "y")  
+
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) +
+  coord_fixed() + facet_grid( . ~ transformation) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        legend.title = element_blank(),
+        plot.title = element_text(hjust = 0.5)) +
+  ggtitle("Todas las transformaciones: log2, rlog y vst") +
+  ggsave("./figures/Figure2_all_transformations.tiff",last_plot(),"tiff",dpi=200)
+
+a<-as.data.frame(log2(assay(ddsMat)+1)) %>%
+  gather(SRA_Sample,value) %>%
+  left_join(fin %>% select(SRA_Sample,Group),by="SRA_Sample")
+
+ggplot(a,aes(x=SRA_Sample,y=value,fill=Group))+
+  geom_boxplot()+
+  theme_classic()+
+  labs(x="",y="")+
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        axis.text.x = element_text(size=7,angle = 90,vjust = .5),
+        plot.title = element_text(hjust = 0.5))+
+  ggtitle("Transformación log2")+
+  ggsave("./figures/Figure3_transf_log2.tiff",last_plot(),"tiff",dpi=200)
+
+b<-as.data.frame(assay(rld)) %>%
+  gather(SRA_Sample,value) %>%
+  left_join(fin %>% select(SRA_Sample,Group),by="SRA_Sample")
+
+ggplot(b,aes(x=SRA_Sample,y=value,fill=Group))+
+  geom_boxplot()+
+  theme_classic()+
+  labs(x="",y="")+
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        axis.text.x = element_text(size=7,angle = 90,vjust = .5),
+        plot.title = element_text(hjust = 0.5))+
+  ggtitle("Transformación rld")+
+  ggsave("./figures/Figure4_transf_rld.tiff",last_plot(),"tiff",dpi=200)
+
+c<-as.data.frame(assay(vsd)) %>%
+  gather(SRA_Sample,value) %>%
+  left_join(fin %>% select(SRA_Sample,Group),by="SRA_Sample")
+
+ggplot(c,aes(x=SRA_Sample,y=value,fill=Group))+
+  geom_boxplot()+
+  theme_classic()+
+  labs(x="",y="")+
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        axis.text.x = element_text(size=7,angle = 90,vjust = .5),
+        plot.title = element_text(hjust = 0.5))+
+  ggtitle("Transformación vst")+
+  ggsave("./figures/Figure5_transf_vst.tiff",last_plot(),"tiff",dpi=200)
+
+sampleDists <- dist(t(assay(vsd)))
+library(pheatmap)
+library(RColorBrewer)
+
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <- paste( vsd$Group, vsd$SRA_Sample, sep = " - " ) ## Tenemos Group y Sra sample
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "GnBu")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors,
+         cellheight = 7.95,cellwidth = 7.95, 
+         main="Mapa de calor, distancias entre las 30 muestras", adj = 0, line = 0)
+png(filename = "./figures/Figure6_pheatmap.png")
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors,
+         cellheight = 7.95,cellwidth = 7.95, 
+         main="Mapa de calor, distancias entre las 30 muestras", adj = 0, line = 0)
+#### Gráfico PCA
+pcaData <-plotPCA(vsd, intgroup = c("Group", "SRA_Sample"),returnData = TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar")) 
+
+ggplot(pcaData, aes(PC1, PC2, color=vsd$Group)) +
+  geom_point(size=3) +
+  theme_classic()+
+  ggtitle("PCA para cada grupo de las 30 muestras") +
+  theme(legend.position = "right",
+        plot.title = element_text(hjust = 0.5)) +
+  labs(color="Grupos") +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_cartesian()+
+  ggsave("./figures/Figure7_PCA.tiff",last_plot(),"tiff",dpi=200)
+
+dds <- DESeq(ddsMat, parallel =TRUE)
+dds
+
+#### SFI vs NIT
+res_SFI_NIT <- results(dds, contrast=c("Group","SFI","NIT"))
+mcols(res_SFI_NIT, use.names = TRUE)
+summary(res_SFI_NIT)
+res.05 <- results(dds, alpha = 0.05)
+table(res.05$padj < 0.05)
+##### Testeado múltiple
+sum(res_SFI_NIT$pvalue < 0.05, na.rm=TRUE)
+sum(res_SFI_NIT$padj < 0.05, na.rm=TRUE)
+#### ELI vs NIT
+res_ELI_NIT <- results(dds, contrast=c("Group","ELI","NIT"))
+mcols(res_ELI_NIT, use.names = TRUE)
+summary(res_ELI_NIT)
+res.05 <- results(dds, alpha = 0.05)
+table(res.05$padj < 0.05)
+##### Testeado múltiple
+sum(res_ELI_NIT$pvalue < 0.05, na.rm=TRUE)
+sum(res_ELI_NIT$padj < 0.05, na.rm=TRUE)
+#### ELI vs SFI
+res_ELI_SFI <- results(dds, contrast=c("Group","ELI","SFI"))
+mcols(res_ELI_SFI, use.names = TRUE)
+summary(res_ELI_SFI)
+res.05 <- results(dds, alpha = 0.05)
+table(res.05$padj < 0.05)
+##### Testeado múltiple
+sum(res_ELI_SFI$pvalue < 0.05, na.rm=TRUE)
+sum(res_ELI_SFI$padj < 0.05, na.rm=TRUE)
+
+### Gráficos de los resultados
+topGene <- rownames(res_SFI_NIT)[which.min(res_SFI_NIT$padj)]
+
+library(ggbeeswarm)
+geneCounts <- plotCounts(dds, gene = topGene, intgroup = c("Group","SRA_Sample"),
+                         returnData = TRUE)
+ggplot(geneCounts, aes(x = Group, y = count,color=Group)) +
+  scale_y_log10() + geom_point(size = 3) + geom_line()+
+  ggtitle("Counts plot; comparación 1: SFI vs NIT ") +
+  theme(legend.position = "none",
+        axis.title.x=element_blank(),
+        plot.title = element_text(hjust = 0.5)) +
+  ggsave("./figures/Figure8_count_plot_SFI_vs_NIT.tiff",last_plot(),"tiff",dpi=200)
+
+hist(res_SFI_NIT$pvalue[res_SFI_NIT$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 1: SFI_NIT",xlab = "p-valores" )
+
+png(filename = "./figures/Figure9_hist_plot_SFI_vs_NIT.png")
+hist(res_SFI_NIT$pvalue[res_SFI_NIT$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 1: SFI_NIT",xlab = "p-valores" )
+
+##### Agrupamiento genético (gene clustering)
+library(genefilter)
+topVarGenes <- head(order(rowVars(assay(vsd)), decreasing = TRUE), 10)
+
+mat  <- assay(vsd)[topVarGenes, ]
+mat  <- mat - rowMeans(mat)
+anno <- as.data.frame(colData(vsd)[, c("SRA_Sample","Group")]) 
+
+annotation_colors = list(  Group = c(SFI="blue", NIT="green",ELI="red"))
+
+pheatmap(mat, annotation_col = anno, cellheight = 7.95,cellwidth = 7.95,col = colors, 
+         cex = 0.75,cluster_cols = TRUE,annotation_legend = TRUE,
+         annotation_colors = annotation_colors,main = "Heatmap o mapa de calor con los datos VST")
+
+png(filename = "./figures/Figure10_pheatmap_vst_trans_values.png")
+pheatmap(mat, annotation_col = anno, cellheight = 7.95,cellwidth = 7.95,
+         col = colors, cex = 0.75,cluster_cols = TRUE,annotation_legend = TRUE,
+         annotation_colors = annotation_colors,main = "Heatmap o mapa de calor con los datos VST")
+
+topGene <- rownames(res_ELI_NIT)[which.min(res_ELI_NIT$padj)]
+
+library(ggbeeswarm)
+geneCounts <- plotCounts(dds, gene = topGene, intgroup = c("Group","SRA_Sample"),
+                         returnData = TRUE)
+
+
+ggplot(geneCounts, aes(x = Group, y = count,color=Group)) +
+  scale_y_log10() + geom_point(size = 3) + geom_line()+
+  ggtitle("Counts plot; comparación 2: ELI vs NIT") +
+  theme(legend.position = "none",
+        axis.title.x=element_blank(),
+        plot.title = element_text(hjust = 0.5)) +
+  ggsave("./figures/Figure11_count_plot_ELI_vs_NIT.tiff",last_plot(),"tiff",dpi=200)
+
+hist(res_ELI_NIT$pvalue[res_ELI_NIT$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 2: ELI_NIT",xlab = "p-valores" )
+
+png(filename = "./figures/Figure12_hist_plot_ELI_vs_NIT.png")
+hist(res_ELI_NIT$pvalue[res_ELI_NIT$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 2: ELI_NIT",xlab = "p-valores" )
+
+topGene <- rownames(res_ELI_SFI)[which.min(res_ELI_SFI$padj)]
+
+library(ggbeeswarm)
+geneCounts <- plotCounts(dds, gene = topGene, intgroup = c("Group","SRA_Sample"),
+                         returnData = TRUE)
+
+ggplot(geneCounts, aes(x = Group, y = count,color=Group)) +
+  scale_y_log10() + geom_point(size = 3) + geom_line()+
+  ggtitle("Counts plot; comparación 3: ELI vs SFI") +
+  theme(legend.position = "none",
+        axis.title.x=element_blank(),
+        plot.title = element_text(hjust = 0.5)) +
+  ggsave("./figures/Figure13_count_plot_ELI_vs_SFI",last_plot(),"tiff",dpi=200)
+
+hist(res_ELI_SFI$pvalue[res_ELI_SFI$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 3: ELI_SFI",xlab = "p-valores" )
+
+png(filename = "./figures/Figure14_hist_plot_ELI_vs_SFI.png")
+hist(res_ELI_SFI$pvalue[res_ELI_SFI$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 3: ELI_SFI",xlab = "p-valores" )
+
+### Anotación de los resultados
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+
+res_SFI_NIT$symbol <- mapIds(org.Hs.eg.db,
+                             keys=row.names(res_SFI_NIT),
+                             column="SYMBOL",
+                             keytype="ENSEMBL",
+                             multiVals="first")
+res_SFI_NIT$entrez <- mapIds(org.Hs.eg.db,
+                             keys=row.names(res_SFI_NIT),
+                             column="ENTREZID",
+                             keytype="ENSEMBL",
+                             multiVals="first")
+
+resOrdered_SFI_NIT <- res_SFI_NIT[order(res_SFI_NIT$pvalue),]
+head(resOrdered_SFI_NIT)
+
+res_ELI_NIT$symbol <- mapIds(org.Hs.eg.db,
+                             keys=row.names(res_ELI_NIT),
+                             column="SYMBOL",
+                             keytype="ENSEMBL",
+                             multiVals="first")
+res_ELI_NIT$entrez <- mapIds(org.Hs.eg.db,
+                             keys=row.names(res_ELI_NIT),
+                             column="ENTREZID",
+                             keytype="ENSEMBL",
+                             multiVals="first")
+
+resOrdered_ELI_NIT <- res_ELI_NIT[order(res_ELI_NIT$pvalue),]
+
+res_ELI_SFI$symbol <- mapIds(org.Hs.eg.db,
+                             keys=row.names(res_ELI_SFI),
+                             column="SYMBOL",
+                             keytype="ENSEMBL",
+                             multiVals="first")
+res_ELI_SFI$entrez <- mapIds(org.Hs.eg.db,
+                             keys=row.names(res_ELI_SFI),
+                             column="ENTREZID",
+                             keytype="ENSEMBL",
+                             multiVals="first")
+
+resOrdered_ELI_SFI <- res_ELI_SFI[order(res_ELI_SFI$pvalue),]
+
+#### Exportando los resultados 
+resOrderedDF_SFI_NIT <- as.data.frame(resOrdered_SFI_NIT)
+resOrderedDF_ELI_NIT <- as.data.frame(resOrdered_ELI_NIT)
+resOrderedDF_ELI_SFI <- as.data.frame(resOrdered_ELI_SFI)
+write.csv(resOrderedDF_SFI_NIT, file = "./results/resultados_SFI_NIT.csv")
+write.csv(resOrderedDF_ELI_NIT, file = "./results/resultados_ELI_NIT.csv")
+write.csv(resOrderedDF_ELI_SFI, file = "./results/resultados_ELI_SFI.csv")
+
+library(EnhancedVolcano)
+EnhancedVolcano(resOrderedDF_SFI_NIT,
+                lab = resOrderedDF_SFI_NIT$symbol,
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                xlim = c(-2, 2),
+                ylim = c(0, 8),
+                title = "Volcano plot, comparación 1: SFI vs NIT",
+                subtitle = "Expresión diferencial",
+                labSize = 4.0,
+                pCutoff = 0.05)
+
+png(filename = "./figures/Figure15_Volcano_plot_SFI_vs_NII.png")
+EnhancedVolcano(resOrderedDF_SFI_NIT,
+                lab = resOrderedDF_SFI_NIT$symbol,
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                xlim = c(-2, 2),
+                ylim = c(0, 8),
+                title = "Volcano plot, comparación 1: SFI vs NIT",
+                subtitle = "Expresión diferencial",
+                labSize = 4.0,
+                pCutoff = 0.05)
+
+EnhancedVolcano(resOrderedDF_ELI_NIT,
+                lab = resOrderedDF_ELI_NIT$symbol,
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                xlim = c(-2, 2),
+                ylim = c(0, 8),
+                title = "Volcano plot, comparación 2: ELI vs NIT",
+                subtitle = "Expresión diferencial",
+                labSize = 4.0,
+                pCutoff = 0.05)
+png(filename = "./figures/Figure16_Volcano_plot_ELI vs NIT.png")
+EnhancedVolcano(resOrderedDF_ELI_NIT,
+                lab = resOrderedDF_ELI_NIT$symbol,
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                xlim = c(-2, 2),
+                ylim = c(0, 8),
+                title = "Volcano plot, comparación 2: ELI vs NIT",
+                subtitle = "Expresión diferencial",
+                labSize = 4.0,
+                pCutoff = 0.05)
+
+EnhancedVolcano(resOrderedDF_ELI_SFI,
+                lab = resOrderedDF_ELI_SFI$symbol,
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                xlim = c(-2, 2),
+                ylim = c(0, 8),
+                title = "Volcano plot, comparación 3: ELI vs SFI",
+                subtitle = "Expresión diferencial",
+                labSize = 4.0,
+                pCutoff = 0.05)
+
+png(filename = "./figures/Figure17_Volcano_plot_ELI vs SFI.png")
+EnhancedVolcano(resOrderedDF_ELI_SFI,
+                lab = resOrderedDF_ELI_SFI$symbol,
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                xlim = c(-2, 2),
+                ylim = c(0, 8),
+                title = "Volcano plot, comparación 3: ELI vs SFI",
+                subtitle = "Expresión diferencial",
+                labSize = 4.0,
+                pCutoff = 0.05)
+
+#### Diagrama de Venn 
+library(limma)
+a<-as.matrix(resOrdered_SFI_NIT$pvalue)
+b<-as.matrix(resOrdered_ELI_NIT$pvalue)
+c<-as.matrix(resOrdered_ELI_SFI$pvalue)
+
+decide_all<-cbind(a,b,c) 
+colnames(decide_all)<-c("SFI_vs_NIT","ELI_vs_NIT","ELI_vs_SFI")
+
+res<-decideTests(decide_all, method="separate", adjust.method="fdr", p.value=0.1, lfc=1)
+sum.res.rows<-apply(abs(res),1,sum)
+res.selected<-res[sum.res.rows!=0,] 
+print(summary(res))
+
+vennDiagram(res.selected[,1:3], cex=0.9)
+
+png(filename = "./figures/Figure18_vennDiagram.png")
+vennDiagram(res.selected[,1:3], cex=0.9)
+
+#### Función degPatterns del paquete DEGreport
+library(DEGreport)
+ma_SFI_NIT = assay(vst(dds))[row.names(res_SFI_NIT)[1:100],]
+pattern_SFI_NIT <- degPatterns(ma_SFI_NIT, metadata=  colData(dds), time = "Group")
+
+png(filename = "./figures/Figure19_pattern.png")
+ma_SFI_NIT = assay(vst(dds))[row.names(res_SFI_NIT)[1:100],]
+pattern_SFI_NIT <- degPatterns(ma_SFI_NIT, metadata=  colData(dds), time = "Group")
+
+### Análisis de significación biológica ("Gene Enrichment Analysis")
+library(clusterProfiler)
+
+#### Comparación 1: SFI vs NIT
+
+OrgDb <- org.Hs.eg.db 
+
+geneList_SFI_NIT <- as.vector(resOrderedDF_SFI_NIT$log2FoldChange)
+names(geneList_SFI_NIT) <- resOrderedDF_SFI_NIT$entrez
+gene_SFI_NIT <- na.omit(resOrderedDF_SFI_NIT$entrez)
+
+# Enrichment analysis
+ego_SFI_NIT <- clusterProfiler::enrichGO(gene          = gene_SFI_NIT,
+                                         OrgDb         = OrgDb,
+                                         ont           = "BP",
+                                         pAdjustMethod = "BH",
+                                         pvalueCutoff  = 0.05,
+                                         qvalueCutoff  = 0.05, 
+                                         readable      = TRUE)
+#head(summary(ego_SFI_NIT)[,-8])
+
+# guardando el resultado enrichment en el directorio como un csv
+write.csv(as.data.frame(ego_SFI_NIT), 
+          file =paste0("./results/","CusterProfiler.Results.SFI_NIT.csv"), 
+          row.names = FALSE)
+
+Tab.react1 <- read.csv2(file.path("./results/CusterProfiler.Results.SFI_NIT.csv"), 
+                        sep = ",", header = TRUE, row.names = 1)
+
+Tab.react1 <- Tab.react1[1:5, 1:5]
+knitr::kable(Tab.react1, booktabs = TRUE,
+             caption = "First rows and columns for ClusterProfiler results on SFI vs NIT comparison")
+
+barplot_SFI_NIT<-barplot(ego_SFI_NIT, showCategory=25)
+barplot_SFI_NIT
+
+png(filename = "./figures/Figure20_boxplot_comp1.png")
+barplot_SFI_NIT<-barplot(ego_SFI_NIT, showCategory=25)
+barplot_SFI_NIT
+
+emapplot(ego_SFI_NIT,pie="count", pie_scale=1.5, layout="nicely",
+         color = "p.adjust",showCategory = 20) + ggtitle("Enrichplot para los términos GO entre SFI y NIT.")
+
+png(filename = "./figures/Figure21_emapplot_comp1.png")
+emapplot(ego_SFI_NIT,pie="count", pie_scale=1.5, 
+         layout="nicely",color = "p.adjust",showCategory = 20) + 
+  ggtitle("Enrichplot para los términos GO entre SFI y NIT.")
+
+#### Comparación 2: ELI vs NIT
+OrgDb <- org.Hs.eg.db 
+
+geneList_ELI_NIT <- as.vector(resOrderedDF_ELI_NIT$log2FoldChange)
+names(geneList_ELI_NIT) <- resOrderedDF_ELI_NIT$entrez
+gene_ELI_NIT <- na.omit(resOrderedDF_ELI_NIT$entrez)
+
+# Enrichment analysis
+ego_ELI_NIT <- clusterProfiler::enrichGO(gene          = gene_ELI_NIT,
+                                         OrgDb         = OrgDb,
+                                         ont           = "BP",
+                                         pAdjustMethod = "BH",
+                                         pvalueCutoff  = 0.05,
+                                         qvalueCutoff  = 0.05, 
+                                         readable      = TRUE)
+#head(summary(ego_ELI_NIT)[,-8])
+
+# guardando el resultado enrichment en el directorio como un csv
+write.csv(as.data.frame(ego_ELI_NIT), 
+          file =paste0("./results/","CusterProfiler.Results.ELI_NIT.csv"), 
+          row.names = FALSE)
+
+Tab.react2 <- read.csv2(file.path("./results/CusterProfiler.Results.ELI_NIT.csv"), 
+                        sep = ",", header = TRUE, row.names = 1)
+
+Tab.react2 <- Tab.react2[1:5, 1:5]
+knitr::kable(Tab.react2, booktabs = TRUE, 
+             caption = "First rows and columns for ClusterProfiler results on ELI vs NIT comparison")
+
+barplot_ELI_NIT<-barplot(ego_ELI_NIT, showCategory=25)
+barplot_ELI_NIT
+
+png(filename = "./figures/Figure22_boxplot_comp2.png")
+barplot_ELI_NIT<-barplot(ego_ELI_NIT, showCategory=25)
+barplot_ELI_NIT
+
+emapplot(ego_ELI_NIT,pie="count", pie_scale=1.5, layout="nicely",
+         color = "p.adjust",showCategory = 20) + ggtitle("Enrichplot para los términos GO entre ELI y NIT.")
+
+png(filename = "./figures/Figure23_emapplot_comp2.png")
+emapplot(ego_ELI_NIT,pie="count", pie_scale=1.5, layout="nicely",
+         color = "p.adjust",showCategory = 20) + ggtitle("Enrichplot para los términos GO entre ELI y NIT.")
+
+#### Comparación 3: ELI vs SFI
+OrgDb <- org.Hs.eg.db 
+
+geneList_ELI_SFI <- as.vector(resOrderedDF_ELI_SFI$log2FoldChange)
+names(geneList_ELI_SFI) <- resOrderedDF_ELI_SFI$entrez
+gene_ELI_SFI <- na.omit(resOrderedDF_ELI_SFI$entrez)
+
+# Enrichment analysis
+ego_ELI_SFI <- clusterProfiler::enrichGO(gene          = gene_ELI_SFI,
+                                         OrgDb         = OrgDb,
+                                         ont           = "BP",
+                                         pAdjustMethod = "BH",
+                                         pvalueCutoff  = 0.05,
+                                         qvalueCutoff  = 0.05, 
+                                         readable      = TRUE)
+#head(summary(ego_ELI_SFI)[,-8])
+
+# guardando el resultado enrichment en el directorio como un csv
+write.csv(as.data.frame(ego_ELI_SFI), 
+          file =paste0("./results/","CusterProfiler.Results.ELI_SFI.csv"), 
+          row.names = FALSE)
+
+Tab.react3 <- read.csv2(file.path("./results/CusterProfiler.Results.ELI_SFI.csv"), 
+                        sep = ",", header = TRUE, row.names = 1)
+
+Tab.react3 <- Tab.react3[1:5, 1:5]
+knitr::kable(Tab.react3, booktabs = TRUE, 
+             caption = "First rows and columns for ClusterProfiler results on ELI vs SFI comparison")
+
+barplot_ELI_SFI<-barplot(ego_ELI_SFI, showCategory=25)
+barplot_ELI_SFI
+png(filename = "./figures/Figure24_boxplot_comp3.png")
+barplot_ELI_SFI<-barplot(ego_ELI_SFI, showCategory=25)
+barplot_ELI_SFI
+emapplot(ego_ELI_SFI,pie="count", pie_scale=1.5, layout="nicely",
+         color = "p.adjust",showCategory = 20) + ggtitle("Enrichplot para los términos GO entre ELI y SFI.")
+
+png(filename = "./figures/Figure25_emapplot_comp3.png")
+emapplot(ego_ELI_SFI,pie="count", pie_scale=1.5, layout="nicely",color = "p.adjust",showCategory = 20) + 
+  ggtitle("Enrichplot para los términos GO entre ELI y SFI.")
+
+
+
+

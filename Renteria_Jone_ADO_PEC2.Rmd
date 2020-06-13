@@ -1,0 +1,1714 @@
+---
+title: 'PEC 2: análisis de datos de ultrasecuenciación'
+author: "Jone Renteria Aguirregabiria"
+date: "29/5/2020"
+output: 
+  prettydoc::html_pretty:
+    toc: true
+    theme: cayman
+    highlight: github
+    toc_depth: '4'
+    number_sections: true
+ # html_document:
+  #  toc: yes
+   # toc_depth: '4'
+    #number_sections: true
+  pdf_document:
+    toc: yes
+    toc_depth: '4'
+    number_sections: true
+bibliography: biblio.bib
+---
+
+<style>
+body {
+text-align: justify}
+</style>
+
+\pagebreak
+
+**Para la reproducción de este proyecto en su totalidad, se facilita el siguiente link al repositorio de GitHub personal del autor. De este modo, el trabajo podrá ser clonado en cualquier ordenador. [Acceso directo a: jonerenteria_RNA_Seq-analysis---PEC2](https://github.com/jonerenteria/RNA_Seq-ultrasequencing). La clonación es posible utilizando GitBash, GitGUI o un proyecto en R.**
+
+# Abstract
+
+Este estudio analiza los datos de expresión obtenidos en el repositorio GTEx1. Los datos recogen información perteneciente a un análisis de tiroides donde se comparan tres tipos de infiltración medidos en un total de 292 muestras divididas en tres grupos: NIT, *Not infiltrated tissues*, SFI, *Small focal infiltrates* y ELI, *Extensive lymphoid infiltrated*. El proceso se lleva a cabo mediante secuenciación ARN (conocido comúnmente como *RNA-Seq*), que es una tecnología que utiliza la *next-generation sequencing (NGS)* para analizar la presencia y la cantidad de ARN en una muestra biológica en un momento determinado, analizando el cambio celular contínuo. En este estudio, comenzando desde la generación de una matriz a partir de los archivos *count* y *targets* proporcionados, se obtiene la significación biológica de los genes más significativos en los tres grupos mencionados previamente. 
+
+# Objetivos 
+
+El objetivo principal de esta práctica es llevar a cabo el análisis de secuenciación (RNA-Seq) de los datos proporcionados. Como primer objetivo está llevar a cabo la selección adecuada de los datos, mediante los paquetes *dplyr* y *tydr* por ejemplo, para trabajar con diez muestras de cada grupo. El segundo objetivo será realizar paso a paso el proceso en R para obtener los genes diferencialmente expresados de las 30 muestras escogidas aleatoriamente para analizar su significación biológica de dos en dos entre los tres grupos propuestos (en total tres comparaciones) para finalmente conseguir el objetivo principal. Otro objetivo de esta práctica que no tiene relación con la ultrasecuenciación en si, es la realización de un documento dinámico que recoja toda la información sobre el proceso llevado a cabo, mostrando los resultados obtenidos en cada paso. Además, a este último objetivo se le suma el uso de GitHub, donde se ha generado un repositorio para facilitar la reproducción del trabajo. 
+
+# Materiales y Métodos 
+
+A continuación se describe el tipo de experimento, los datos y los métodos utilizados para llevar a cabo el análisis de ultrasecuenciación.
+
+## Datos, tipo de experimento y diseño experimental 
+
+Para llevar a cabo el análisis de datos de ultrasecuenciación, primeramente se han cargado los datos de las muestras del estudio obtenido en el repositorio GTEx. En concreto, se han seleccionado los datos de expresión RNA-seq pertenecientes a un análisis de tiroides en donde se comparan tres tipos de infiltración medidos en 292 muestras separadas en tres grupos. Estos grupos son los siguientes: 
+
++ *Not infiltrated tissues* (NIT): 236 muestras
++ *Small focal infiltrates* (SFI): 42 muestras
++ *Extensive lymphoid infiltrates* (ELI): 14 muestras
+
+## Métodos y herramientas utilizadas en el análisis
+
+**Workflow**
+
+A continuación se describen los pasos llevados a cabo para la resolución del análisis de ultrasecuenciación en el Software R.  
+
+### Definición de los datos
+
+El objetivo de la primera parte del análisis ha sido la selección de 10 muestras aleatorias de cada uno de los tres grupos de análisis descritos previamente. Para ello, ha sido necesario cargar ambos archivos (*targets*) y (*counts*) en R, utilizando la función *read.csv*, dado que ambos se encuentran en ese formato en el repositorio de Github. 
+
+```{r readfiles,include=FALSE}
+targets<-read.csv("targets.csv",sep = ",")
+counts<-read.csv("counts.csv",header = TRUE,sep = ";")
+counts$X<-gsub("\\..*", "", counts$X, fixed = FALSE)
+```
+
+```{r CreateFolders, warning=FALSE, eval=FALSE, include=FALSE}
+setwd(".")
+dir.create("results")
+dir.create("figures")
+```
+
+Una vez tenemos los dos archivos cargados, utilizando el paquete *dplyr* se ha llevado a cabo la selección aleatoria de 10 muestras de cada uno de los tres grupos (NIT, SFI y ELI). Para ello, mediante la función *split* se ha separado el *dataframe* targets según los grupos que se describen en la columna *Group* del mismo *dataset*. Por lo tanto, hemos obtenido una lista separada en los tres grupos que se definen en la columna *Group*. Para la selección aleatoria de la muestra, se ha generado una función, denominada en este caso *gen*. El objetivo de la función ha sido generar un *dataframe* que coja 10 filas de forma aleatoria de un conjunto de datos que se le introduzca a la función. Además, para asegurar la repetitividad de los datos, se ha especificado la semilla *123*. Una vez definida la función, se ha procedido a la *llamada* de la misma. Debemos recordar que nuestro objetivo es obtener 10 muestras **de cada grupo**, es decir, en total **30** muestras. Para ello, con la función *lapply* hemos aplicado la función generada *gen* sobre el listado formado previamente con la función *split*. Sin embargo, para poder trabajar adecuadamente en los siguientes apartados, necesitamos tener los datos en un *dataframe* y unir la división del listado. Lo conseguiremos utilizando la función *bind_rows* sobre el listado. 
+
+```{r selection,include=FALSE}
+library(dplyr)
+a<-split(targets,targets$Group)
+
+gen<-function(df){
+  set.seed(123)
+  
+  x<-as.data.frame(df[sample(nrow(df), 10),])
+  
+  return(x)
+  
+}
+
+gen(targets)
+l1<-lapply(a, gen)
+fin<-bind_rows(l1)
+```
+
+Por lo tanto, el *dataframe* que hemos generado (denominado *fin*) tiene `r nrow(fin)` observaciones y `r ncol(fin)` variables. Sin embargo, el siguiente paso consiste en seleccionar las columnas escogidas en el archivo *counts.csv* según las `r nrow(fin)` filas que hemos seleccionado aleatoriamente. El *dataframe* generado se ha guardado como un `csv` en la carpeta de resultados. 
+
+Para llevar a cabo este paso, lo primero que se ha hecho ha sido modificar el nombre de la columna *Sample_Name*, puesto que son diferentes a los que hay en el archivo *counts*. La diferencia entre los nombres es que en el *dataset counts*, las diferentes secciones están separadas con puntos, y en *targets* con guiones. Por lo tanto, con la función *gsub* hemos modificado los nombres en el *dataframe* generado previamente, y hemos puesto todos los nombres con puntos. 
+
+Para seleccionar las columnas coincidentes del *dataframe* que contiene las `r nrow(fin)` observaciones (`r nrow(fin)/3` de cada tipo), con las del *dataframe* *counts*, hemos utilizado los paquetes *tidyr* y *dplyr*. Mediante los *pipes* *(%>%)*, hemos utilizado las funciones *gather*, *left_join* y *filter*:
+
++ *Gather*: se han generado dos columnas con todos los valores de las columnas originales de *counts* (excluyendo la columna X que tiene los nombres *ENSGO*). Por lo tanto, se comprime toda la información del *dataframe* original a tres únicas columnas. 
++ *Left_join*: tras aplicar *gather*, con esta función lo que se ha hecho ha sido *sumarle* las columnas del *dataframe* generado para la selección de las 10 muestras. Sin embargo, ahora hay muchas más combinaciones, por lo tanto, la mayoría de casillas serán valores NA. Para solucionar esto, aplicamos la siguiente función. 
++ *Filter*: la última función *filter* junto con *complete.cases(.)* lo que hace es quedarse únicamente con las entradas que no tienen valores NA. 
+
+```{r subset,include=FALSE}
+library(tidyr)
+levels(fin$Sample_Name) <- gsub("-", ".", levels(fin$Sample_Name)) # nos hemos dado cuenta que en counts tienen puntos y en targets -  entonces hemos sustituido todo. 
+counts.long<-counts %>%
+  gather(Sample_Name,value,-X) %>%
+  left_join(fin,by="Sample_Name") %>%
+  filter(complete.cases(.))
+```
+
+Debemos recordar que el *dataset* original de *counts.csv* contiene `r nrow(counts)` filas. Por lo tanto, el *dataset* final que hemos denominado *counts.long* tiene, esas filas multiplicadas por las `r nrow(fin)` variables, es decir, `r nrow(counts.long)`. Tendrá `r ncol(counts.long)` columnas. 
+
+Para llevar a cabo el análisis posterior de una forma más simple, del *dataset* *counts.long* que recoge todas las combinaciones posibles entre las 10 muestras, seleccionaremos únicamente tres: *X* (define las entradas ENSG0), *value* (el valor) y las muestras *SRA*. Para ello utilizaremos la función *select*. 
+
+Además, será necesario transformar del conjunto de datos de la siguiente manera: las entradas ENSEMBL (ENSG0) serán las filas y cada RNA_Sample (librería secuenciada de RNA) serán las columnas. Entre cada fila y columna, tendremos el valor, que se recoge en la columna *value*, y que en definitiva muestran los valores asignados a cada gen de cada librería . Finalmente, transformaremos el conjunto de datos en una matriz para poder trabajar con ella más adelante. En inglés se denomina *count matrix*. 
+
+```{r final,include=FALSE}
+library(tibble) # for the column_to_rownames function
+
+counts.long2<-counts.long %>%
+  dplyr::select(X,value,SRA_Sample)
+
+counts.long3<-counts.long2 %>%
+  spread(SRA_Sample,value) %>% 
+  column_to_rownames(var="X") %>%
+  as.matrix()
+```
+
+Por lo tanto, nuestra *count matrix* final tiene `r nrow(counts.long3)` filas (entradas ENSEMBL) y `r ncol(counts.long3)` columnas, correspondientes a las librerías *RNA_Sample* que hemos seleccionado aleatoriamente al principio, cada una correspondiente a un grupo: ELI, NIT o SFI.  
+
+Es importante que las columnas de la matriz *count* y las filas del data frame que contiene la información (en nuestro caso *fin*) estén en el mismo orden y por ello conviene comprobarlo. Se observa mediante la función *all(as.vector(fin$SRA_Sample) == colnames(counts.long3))* que esta igualdad es verdadera (*true*). 
+El resultado se ha guardado en un archivo `csv` en la carpeta de resultados.
+
+```{r include=FALSE}
+fin<- fin %>%
+  arrange(SRA_Sample)
+
+write.csv(fin,file = "./results/seleccion_targets.csv")
+
+all(as.vector(fin$SRA_Sample) == colnames(counts.long3))
+```
+
+El último paso antes de comenzar el análisis, será construir el objeto *DESeqDataSet* desde la matriz *counts* previamente generada y junto con la tabla de información que tenemos, en nuestro caso, denominada *fin* tal y como hemos explicado previamente. Para ello utilizaremos la función *DESeqDataSetFromMatrix* del paquete *DESeq2*. A continuación se muestra el output del DataSet generado: 
+
+```{r DESeq2_1,echo=FALSE,message=FALSE,warning=FALSE}
+library(DESeq2)
+
+ddsMat <- DESeqDataSetFromMatrix(countData = counts.long3,
+                                  colData = fin,  
+                                  design = ~ Group)
+ddsMat
+```
+
+El siguiente paso en el análisis consiste en el filtrado y la normalización de los datos recogidos en el objecto *DESeqDataSet*. 
+
+### Preprocesado de los datos: filtraje y normalización
+
+#### Pre-filtrado del conjunto de datos
+
+Con el objetivo de reducir el tamaño del objeto DESeqDataSet y por lo tanto aumentar la velocidad de las funciones que apliquemos en el futuro, procederemos a eliminar las filas que no contengan información o que contentan muy poca información sobre la cantidad de expresión genética. En otras palabras, se eliminarán las filas con muchos ceros y con conteos muy bajos. 
+
+Tal y como se ha comentado, el método de filtrado que se ha llevado a cabo ha sido el de eliminar las filas del objeto DESeqDataSet que no tienen conteos o que simplemente tienen un único conteo en todas las muestras. Este es el filtrado menor que se puede hacer sobre un conjunto de datos de estas características. He considerado adecuado aplicar únicamente este para ver cómo queda el conjunto de datos, y si posteriormente obeservo un tiempo computacional demasiado elevado, consideraré aplicar normas más restrictivas al filtrado. 
+
+```{r filtering, include=FALSE}
+ddsMat <- ddsMat[ rowSums(counts(ddsMat)) > 1, ]
+nrow(ddsMat)
+```
+
+Tras aplicar el filtrado, obtenemos un conjunto de datos con `r nrow(ddsMat)` filas. Hemos eliminado, 13024 genes del estudio, un `r 100-round(nrow(ddsMat)*100/56202,2)`%. 
+
+#### Transformación para estabilizar la varianza (vst) 
+
+Para aplicar métodos estadísticos con el objetivo de analizar el conjunto de datos, es más fácil trabajar con datos que tienen el mismo rango de varianza en diferentes rangos de la media. El objetivo será que los gráficos que generemos no dependan de los genes con conteos más altos. 
+
+El paquete *DESeq2* ofrece dos transformaciones para el conteo de datos que estabiliza la varianza en la media: la función *VST* y  *rlog*. Ambas funciones transforman los conteos a valores (por lo tanto, ya no serán conteos) y se guardan en un *assay slot*. En nuestro caso, utilizaremos la función *VST* para llevar a cabo este paso puesto que tenemos más de 30 muestras, y es el método recomendado. Además, computacionalmente es más rápido que *rlog*. A continuación se muestra las primeras tres filas ENSG0 tras haber aplicado la función *assay* sobre el objeto transformado mediante *vst*: 
+
+```{r vsd,echo=FALSE}
+vsd <- vst(ddsMat, blind = FALSE)
+head(assay(vsd), 3)
+```
+
+```{r colData_sobre_vsd,include= FALSE}
+colData(vsd)
+```
+
+Para mostrar el efecto de la transformación mediante *vst*, en el siguiente gráfico se muestra la primera muestra frente a la segunda utilizando los valores de la transformación de la varianza (vst): 
+
+```{r plot_vsd,message=FALSE,warning=FALSE, fig.align='center', fig.width=7, fig.height=6, echo=FALSE, fig.cap="Transformación vst"}
+library(ggplot2)
+
+df <- bind_rows(
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"))
+  
+colnames(df)[1:2] <- c("x", "y")  
+
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 250) +
+  coord_fixed() + facet_grid( . ~ transformation)  +
+  ggtitle("Transformación VST") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank())+
+  ggsave("./figures/Figure1_transf_vst.tiff",last_plot(),"tiff",dpi=200)
+```
+
+En el *scatterplot* que se muestra arriba, se observa que los genes con conteos bajos (abajo a la izquierda) parecen ser excesivamente variables, sin mostrar diferencias para los genes con conteos bajos tal y como se experaba tras la transformación VST. 
+
+Sin embargo, en la teoría del curso hemos observado la comparación de la transformación VST con la transformación *rlog* y la tradicional *log2*. En este caso se había comentado que no se iba a utilizar la transformación *rlog* puesto que tenemos 30 muestras (30 es el punto de corte que establece la teoría para elegir VST o *rlog*) y computacionalmente es más rápido el método *VST*. Sin embargo, al observar el resultado en el gráfico anterior, he visto necesario comparar las tres gráficas (*vst, rlog* y *log2*) tal y como se hace en lo aprendido durante el curso. De este modo, podremos observar si la transformación VST es más explicativa a la hora de mostrar las diferencias entre los genes. El resultado se observa a continuación: 
+
+```{r allplots, message=FALSE, fig.align='center', fig.width=7, fig.height=6, echo=FALSE, fig.cap="Las tres comparaciones: log2 (izquierda), vst (derecha) y rlog (centro)", warning=FALSE}
+rld <- rlog(ddsMat, blind = FALSE) # rlog transformation
+
+ddsMat <- estimateSizeFactors(ddsMat) # for the log2 transformation
+
+df <- bind_rows(
+  as_data_frame(log2(counts(ddsMat, normalized=TRUE)[, 1:2]+1)) %>%
+         mutate(transformation = "log2(x + 1)"),
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_data_frame(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+  
+colnames(df)[1:2] <- c("x", "y")  
+
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) +
+  coord_fixed() + facet_grid( . ~ transformation) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        legend.title = element_blank(),
+        plot.title = element_text(hjust = 0.5)) +
+  ggtitle("Todas las transformaciones: log2, rlog y vst") +
+  ggsave("./figures/Figure2_all_transformations.tiff",last_plot(),"tiff",dpi=200)
+```
+
+En este segundo conjunto de gráficos que se muestra, se pueden observar la transformación *log2* de los datos normalizados (a la izquierda), la transformación *rlog* en la mitad y en la derecha otra vez la transformación VST. Sin embargo, al observar la transformación VST junto con las otras dos, la interpretación del gráfico es diferente al gráfico anterior (aunque en realidad muestren lo mismo). El gráfico VST muestra una tendencia hacia arriba (*upward shift*) de los valores más bajos. Se observa que en el caso de *log2*, los conteos bajos son excesivamente variables. En el caso del VST y del *rlog*, éstos comprimen las diferencias para los genes de conteo bajos, de los cuales el conjunto de datos da poca información sobre la expresión diferencial. 
+
+También es posible representar la transformación mediante gráficos de cajas (*boxplots*): 
+
+```{r boxplots1, echo=FALSE,fig.cap="Boxplot para la transformación log2",message=FALSE,warning=FALSE, fig.align='center', fig.width=7, fig.height=6}
+a<-as.data.frame(log2(assay(ddsMat)+1)) %>%
+  gather(SRA_Sample,value) %>%
+  left_join(fin %>% select(SRA_Sample,Group),by="SRA_Sample")
+
+ggplot(a,aes(x=SRA_Sample,y=value,fill=Group))+
+  geom_boxplot()+
+  theme_classic()+
+  labs(x="",y="")+
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        axis.text.x = element_text(size=7,angle = 90,vjust = .5),
+        plot.title = element_text(hjust = 0.5))+
+  ggtitle("Transformación log2")+
+  ggsave("./figures/Figure3_transf_log2.tiff",last_plot(),"tiff",dpi=200)
+```
+
+```{r boxplots2, echo=FALSE,fig.cap="Boxplot para la transformación rld",message=FALSE,warning=FALSE, fig.align='center', fig.width=7, fig.height=6}
+b<-as.data.frame(assay(rld)) %>%
+  gather(SRA_Sample,value) %>%
+  left_join(fin %>% select(SRA_Sample,Group),by="SRA_Sample")
+
+ggplot(b,aes(x=SRA_Sample,y=value,fill=Group))+
+  geom_boxplot()+
+  theme_classic()+
+  labs(x="",y="")+
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        axis.text.x = element_text(size=7,angle = 90,vjust = .5),
+        plot.title = element_text(hjust = 0.5))+
+  ggtitle("Transformación rld")+
+  ggsave("./figures/Figure4_transf_rld.tiff",last_plot(),"tiff",dpi=200)
+```
+
+```{r boxplots3, echo=FALSE,fig.cap="Boxplot para la transformación vsd",message=FALSE,warning=FALSE, fig.align='center', fig.width=7, fig.height=6}
+c<-as.data.frame(assay(vsd)) %>%
+  gather(SRA_Sample,value) %>%
+  left_join(fin %>% select(SRA_Sample,Group),by="SRA_Sample")
+
+ggplot(c,aes(x=SRA_Sample,y=value,fill=Group))+
+  geom_boxplot()+
+  theme_classic()+
+  labs(x="",y="")+
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        axis.text.x = element_text(size=7,angle = 90,vjust = .5),
+        plot.title = element_text(hjust = 0.5))+
+  ggtitle("Transformación vst")+
+  ggsave("./figures/Figure5_transf_vst.tiff",last_plot(),"tiff",dpi=200)
+```
+
+Los gráficos mediante *boxplot* de las distribuciones de conteo en cada muestra son una buena forma para entender el efecto que las transformaciones tienen a nivel individual de cada muestra. En los boxplots, son conocidos los circulos para mostrar puntos *outliers*. En los tres gráficos mostrados, ni el gráfico de la distribución *log2* ni la distribución *rlog* muestran valores *outlier* en la parte alta de la distribución. Sin embargo, la transformación *vst* si que tiene *outliers*, dado que este método comprime los valores más bajos de forma más considerable que los otros dos métodos, de la misma manera que se puede observar en los gráficos de puntos (*scatterplots*) mostrados anteriormente. 
+
+#### Distancia entre muestras
+
+Para el análisis secuencial RNA, es aconsejable que uno de los primeros pasos sea evaluar la similitud entre la distancia de las muestras para observar qué muestras son parecidas unas con otras. Para ello se utilizará la función *dist* para calcular la distancia euclidiana entre las muestras del estudio, y lo aplicaremos sobre los datos transformados mediante VST. Necesitaremos llevar a cabo la transpuesta de la matriz de valores utilizando la función *t*. 
+
+```{r include=FALSE}
+sampleDists <- dist(t(assay(vsd)))
+```
+
+Para visualizar las distancias, a continuación se muestra un *heatmap* (mapa de calor). Para su obtención, se utilizará la función *pheatmap* del paquete del mismo nombre.  El resultado se muestra a continuación: 
+
+```{r message=FALSE,warning=FALSE, echo=FALSE,fig.cap="Mapa de calor de la distancia entre las 30 muestras (heatmap)", fig.align='center', fig.width=7, fig.height=6}
+library(pheatmap)
+library(RColorBrewer)
+
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <- paste( vsd$Group, vsd$SRA_Sample, sep = " - " ) ## Tenemos Group y Sra sample
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "GnBu")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors,
+         cellheight = 7.95,cellwidth = 7.95, 
+         main="Mapa de calor, distancias entre las 30 muestras", adj = 0, line = 0, filename = "./figures/Figure6_pheatmap.pdf")
+```
+
+```{r message=FALSE,echo=FALSE,fig.cap="pheatmap_dist_muestras"}
+png(filename = "./figures/Figure6_pheatmap.png")
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors,
+         cellheight = 7.95,cellwidth = 7.95, 
+         main="Mapa de calor, distancias entre las 30 muestras", adj = 0, line = 0)
+```
+
+En el *heatmap* observamos que los nombres de cada fila están compuestos por el Grupo (ELO, NIT o SFI) y el distintivo del RNA_Sample. De esta manera tenemos toda la información a la vista a la hora de analizar y observar el *heatmap* y ver la distancia entre las muestras y el grupo al que pertenecen. 
+
+#### Gráfico PCA
+
+Otro modo de analizar las distancias entre las muestras es mediante el análisis PCA, en sus siglas en inglés *Principal Component Analysis*. En el eje *x* se muestra la distancia en la cual las muestras se separan entre ellas más, y los valores en esta dirección se definen como PC1. El eje *y* define otra dirección perpendicular a la del eje *x* donde los datos se separan más después de PC1, y se denomina PC2. El gráfico PCA utilizando los datos VST se muestra a continuación:
+
+```{r plot2,fig.align='center', fig.width=5, fig.height=5,echo=FALSE,fig.cap="Gráfico PCA", message=FALSE, warning=FALSE}
+pcaData <-plotPCA(vsd, intgroup = c("Group", "SRA_Sample"),returnData = TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar")) 
+
+ggplot(pcaData, aes(PC1, PC2, color=vsd$Group)) +
+  geom_point(size=3) +
+  theme_classic()+
+  ggtitle("PCA para cada grupo de las 30 muestras") +
+  theme(legend.position = "right",
+        plot.title = element_text(hjust = 0.5)) +
+  labs(color="Grupos") +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_cartesian()+
+  ggsave("./figures/Figure7_PCA.tiff",last_plot(),"tiff",dpi=200)
+```
+
+Dado que en nuestro caso tenemos 10 muestras de cada group (ELI, NIT o SFI) y en total obtenemos 30 muestras independientes, se ha optado por aplicar la función *plotPCA* pero filtrando las muestras por el tipo de grupo al que pertenecen. De este modo, en lugar de obtener 30 puntos de distintos colores cada uno perteneciente a cada una de las muestras seleccionadas al principio, se muestran 10 puntos de cada color, cada uno de los tres grupos del análisis. Es importante tener en cuenta que el porcentaje total de PC1 y PC2 no suman 100%, dado que hay más dimensiones que tienen la varianza restante. 
+
+Observando la distribución de cada uno de los grupos en el gráfico, para el próximo paso que es la identificación de los genes diferencialmente expresados, se llevará a cabo el análisis con todos los grupos juntos (aunque en todos los casos alguno de los grupos no participe en las comparaciones dos a dos) puesto que la variabilidad entre los grupos no se observa que sea elevada. En el caso de que la distribución en el gráfico PCA se hubiera visto muy marcada (por ejemplo, los grupos ELI en una esquina, los SFI en otra y los NIT en otra), esto nos hubiera indicado que uno o algunos de los grupos tendría mucha más variabilidad entre los grupos que los demás. En este caso hipotético, si que hubiera sido aconsejable crear conjuntos de datos sin la tercera variable. 
+
+En este caso, no se ha llevado a cabo el gráfico MDS puesto que con el PCA hemos obtenido suficiente información a partir de los datos transformados mediante *vst*. 
+
+### Identificación de genes diferencialmente expresados
+
+Utilizando la función *DESeq*, sobre el objeto *ddsMat* (objeto *DESeqDataSet*), llevaremos a cabo el análisis de la expresión diferencial en los conteos brutos.
+
+```{r dds_DESeq_func, warning=FALSE, echo=FALSE,message=FALSE}
+dds <- DESeq(ddsMat, parallel =TRUE)
+dds
+```
+
+La función *DESeq* devuelve un objeto *DESeqDataSet* que contiene todos los parámetros ajustados. 
+
+En las siguientes sub-secciones, llevaremos a cabo la extracción de tablas de resultados de interés para el análisis de esta PEC. Empezaremos con la comparación 1: *SFI vs NIT*. 
+
+#### Comparación 1: SFI vs NIT
+
+La primera comparación que se llevará a cabo será la del Grupo **SFI vs NIT**. Para ello, mediante la función *results*, contrastaremos (con la función *contrast*) los niveles SFI y NIT de la variable Group.
+
+```{r include=FALSE}
+#### SFI vs NIT
+res_SFI_NIT <- results(dds, contrast=c("Group","SFI","NIT"))
+```
+
+Es importante destacar la *meta-data* que incorpora la comparación realizada: 
+
+```{r mcols1,echo=FALSE}
+mcols(res_SFI_NIT, use.names = TRUE)
+```
+
+También, la información numérica de la comparación: 
+
+```{r echo=FALSE}
+summary(res_SFI_NIT)
+```
+
+Una vez se han analizado los resultados de la comparación de los dos grupos, cabe destacar que hay dos maneras para determinar que genes se pueden considerar significantes: 
+
++ Reducir el umbral del *false discovery rate (FDR)*
++ Aumentar el umbral del *log2* desde 0 utilizando el argumento *lfcThreshold* en la función *results*. 
+
+```{r include=FALSE}
+res.05 <- results(dds, alpha = 0.05)
+table(res.05$padj < 0.05)
+```
+
+Utilizando el primer método, obtenemos (reduciendo el umbral del *false discovery rate (FDR)*) `r table(res.05$padj < 0.05)[1]` falsos positivos y `r table(res.05$padj < 0.05)[2]` true positives. Obtenemos estos mismos valores de genes significativos para las tres comparaciones. 
+
+##### Testeado múltiple
+
+En el caso del mapeado múltiple, podríamos analizar qué pasaría si pusieramos el umbral del valor de p en un valor bajo, como por ejemplo 0.05 (5%). 
+
+```{r include=FALSE}
+sum(res_SFI_NIT$pvalue < 0.05, na.rm=TRUE)
+```
+
+Por la propia definición del p-valor, esperaríamos tener hasta un 5% de genes cuyo p-valor fuera inferior a 0.05. Del total de `r  sum(!is.na(res_SFI_NIT$pvalue))` genes, serían `r round(5*sum(!is.na(res_SFI_NIT$pvalue))/100,0)` genes, pero hemos obtenido `r sum(res_SFI_NIT$pvalue < 0.05, na.rm=TRUE)`. Con los resultados obtenidos, este listado por lo tanto, tendría, `r round(5*sum(!is.na(res_SFI_NIT$pvalue))/100,0)` / `r sum(res_SFI_NIT$pvalue < 0.05, na.rm=TRUE)` = `r round(round(5*sum(!is.na(res_SFI_NIT$pvalue))/100,0)/sum(res_SFI_NIT$pvalue < 0.05, na.rm=TRUE)*100,2)`% de falsos positivos. 
+
+En la columna de *padj* del objeto *res* (en concreto res__SFI_NIT) definido previamente, tenemos el p-valor ajustado según el ajuste de Benjamini-Hochberg (BH). Con el *padj* queremos saber la fracción de falsos positivos entre los genes que tengan un p-valor igual o inferior al umbral establecido. 
+
+Por lo tanto, si consideramos un 5% de falsos positivos aceptable, podemos considerar que todos los genes con un p-valor ajustado menor al 5% (0.05) serán significativos.  
+
+```{r include=FALSE}
+sum(res_SFI_NIT$padj < 0.05, na.rm=TRUE)
+```
+
+Por ello, se suma para ver a cuántos genes le pasa, y con el umbral en un 5%, obtenemos `r sum(res_SFI_NIT$padj < 0.05, na.rm=TRUE)` genes significativos, cuyo p-valor sea menor o igual que un 5%. 
+
+#### Comparación 2: ELI vs NIT
+
+La segunda comparación que se llevará a cabo será la del Grupo **ELI vs NIT**. Para ello, mediante la función *results*, contrastaremos (con la función *contrast*) los niveles ELI y NIT de la variable Group.
+
+```{r include=FALSE}
+#### ELI vs NIT
+res_ELI_NIT <- results(dds, contrast=c("Group","ELI","NIT"))
+```
+
+Es importante destacar la *meta-data* que incorpora la comparación realizada: 
+
+```{r mcols2,echo=FALSE}
+mcols(res_ELI_NIT, use.names = TRUE)
+```
+
+También, la información numérica de la comparación: 
+
+```{r echo=FALSE}
+summary(res_ELI_NIT)
+```
+
+```{r include=FALSE}
+res.05 <- results(dds, alpha = 0.05)
+table(res.05$padj < 0.05)
+```
+
+##### Testeado múltiple
+
+En el caso del mapeado múltiple, podríamos analizar qué pasaría si pusieramos el umbral del valor de p en un valor bajo, como por ejemplo 0.05 (5%). 
+
+```{r include=FALSE}
+sum(res_ELI_NIT$pvalue < 0.05, na.rm=TRUE)
+```
+
+Por la propia definición del p-valor, esperaríamos tener hasta un 5% de genes cuyo p-valor fuera inferior a 0.05. Del total de `r  sum(!is.na(res_ELI_NIT$pvalue))` genes, serían `r round(5*sum(!is.na(res_ELI_NIT$pvalue))/100,0)` genes y en este caso obtenemos `r sum(res_ELI_NIT$pvalue < 0.05, na.rm=TRUE)`. Este listado por lo tanto, tendría, `r round(5*sum(!is.na(res_ELI_NIT$pvalue))/100,0)` / `r sum(res_ELI_NIT$pvalue < 0.05, na.rm=TRUE)` = `r round(round(5*sum(!is.na(res_ELI_NIT$pvalue))/100,0)/sum(res_ELI_NIT$pvalue < 0.05, na.rm=TRUE)*100,2)`% falsos positivos. 
+
+En la columna de *padj* del objeto *res* (en concreto res__ELI_NIT) definido previamente, tenemos el p-valor ajustado según el ajuste de Benjamini-Hochberg (BH). Con el *padj* queremos saber la fracción de falsos positivos entre los genes que tengan un p-valor igual o inferior al umbral establecido. 
+
+Por lo tanto, si consideramos un 5% de falsos positivos aceptable, podemos considerar que todos los genes con un p-valor ajustado menor al 5% (0.05) serán significativos.  
+
+```{r include=FALSE}
+sum(res_ELI_NIT$padj < 0.05, na.rm=TRUE)
+```
+
+Por ello, vamos a sumar a cuántos genes le pasa, y con el umbral en un 5%, obtenemos `r sum(res_ELI_NIT$padj < 0.05, na.rm=TRUE)` genes significativos, cuyo p-valor es menor o igual que un 5%. 
+
+#### Comparación 3: ELI vs SFI
+
+La tercera comparación que se llevará a cabo será la del Grupo **ELI vs SFI**. Para ello, mediante la función *results*, contrastaremos (con la función *contrast*) los niveles ELI y SFI de la variable *Group*.
+
+```{r include=FALSE}
+#### ELI vs SFI
+res_ELI_SFI <- results(dds, contrast=c("Group","ELI","SFI"))
+```
+
+Es importante destacar la *meta-data* que incorpora la comparación realizada: 
+
+```{r mcols3,echo=FALSE}
+mcols(res_ELI_SFI, use.names = TRUE)
+```
+
+También, la información numérica de la comparación: 
+
+```{r echo=FALSE}
+summary(res_ELI_SFI)
+```
+
+```{r include=FALSE}
+res.05 <- results(dds, alpha = 0.05)
+table(res.05$padj < 0.05)
+```
+
+##### Testeado múltiple
+
+En el caso del mapeado múltiple, podríamos analizar qué pasaría si pusieramos el umbral del valor de p en un valor bajo, como por ejemplo 0.05 (5%). 
+
+```{r include=FALSE}
+sum(res_ELI_SFI$pvalue < 0.05, na.rm=TRUE)
+```
+
+Por la propia definición del p-valor, esperaríamos tener hasta un 5% de genes cuyo p-valor fuera inferior a 0.05. Del total de `r  sum(!is.na(res_ELI_SFI$pvalue))` genes, serían `r round(5*sum(!is.na(res_ELI_SFI$pvalue))/100,0)` genes y aquí obtenemos `r sum(res_ELI_SFI$pvalue < 0.05, na.rm=TRUE)`. Este listado por lo tanto, tendría, `r round(5*sum(!is.na(res_ELI_SFI$pvalue))/100,0)` / `r sum(res_ELI_SFI$pvalue < 0.05, na.rm=TRUE)` = `r round(round(5*sum(!is.na(res_ELI_SFI$pvalue))/100,0)/sum(res_ELI_SFI$pvalue < 0.05, na.rm=TRUE)*100,2)`% falsos positivos. 
+
+En la columna de *padj* del objeto *res* (en concreto res__ELI_NIT) definido previamente, tenemos el p-valor ajustado según el ajuste de Benjamini-Hochberg (BH). Con el *padj* queremos saber la fracción de falsos positivos entre los genes que tengan un p-valor igual o inferior al umbral establecido. 
+
+Por lo tanto, si consideramos un 5% de falsos positivos aceptable, podemos considerar que todos los genes con un p-valor ajustado menor al 5% (0.05) serán significativos. 
+
+```{r include=FALSE}
+sum(res_ELI_SFI$padj < 0.05, na.rm=TRUE)
+```
+
+Por ello, vamos a sumar a cuántos genes le pasa y con el umbral en un 5%, obtenemos `r sum(res_ELI_SFI$padj < 0.05, na.rm=TRUE)` genes significativos, cuyo p-valor es menor o igual que un 5%. 
+
+### Gráficos de los resultados 
+
+A continuación se muestran los gráficos para los resultados observados en el apartado anterior. Los gráficos se muestran para cada comparación llevada a cabo en el análisis. 
+
+#### Comparación 1: SFI vs NIT
+
+Para la comparación 1, los gráficos que se llevan a cabo son los siguientes: 
+
+##### Counts plot 
+
+Mediante la función *plotCounts* (del paquete *ggbeeswarm*) se extraen los argumentos del objeto del *DESeqDataSet* (valor del conteo, grupo al que pertenece y la muestra *SRA_Sample*). El gráfico se muestra a continuación:
+
+```{r count1, message=FALSE, fig.align='center', fig.width=5, fig.height=4, echo=FALSE,fig.cap="Count plot SFIvsNIT", warning=FALSE}
+topGene <- rownames(res_SFI_NIT)[which.min(res_SFI_NIT$padj)]
+
+library(ggbeeswarm)
+geneCounts <- plotCounts(dds, gene = topGene, intgroup = c("Group","SRA_Sample"),
+                         returnData = TRUE)
+ggplot(geneCounts, aes(x = Group, y = count,color=Group)) +
+  scale_y_log10() + geom_point(size = 3) + geom_line()+
+  ggtitle("Counts plot; comparación 1: SFI vs NIT ") +
+  theme(legend.position = "none",
+        axis.title.x=element_blank(),
+        plot.title = element_text(hjust = 0.5)) +
+  ggsave("./figures/Figure8_count_plot_SFI_vs_NIT.tiff",last_plot(),"tiff",dpi=200)
+```
+
+Tal y como he hecho en el gráfico del PCA anteriormente, en este caso en lugar de mostrar de un color particular cada muestra *SRA* (SRA_Sample), éstas se han agrupado y mostrado dependiendo del grupo al que pertenecen, para facilitar la visualización de los datos. 
+
+##### Histograma p-valores
+
+Otro gráfico de diagnóstico que puede resultar interesante es el histograma de los p-valores. Este gráfico exluye a los genes con conteos muy bajos. El gráfico se muestra a continuación: 
+
+```{r hist1,echo=FALSE,fig.cap="Histograma SFI vs NIT", fig.align='center', fig.width=7, fig.height=6}
+hist(res_SFI_NIT$pvalue[res_SFI_NIT$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 1: SFI_NIT",xlab = "p-valores" )
+```
+
+```{r hist1_save,echo=FALSE,fig.cap="Histograma SFI vs NIT"}
+png(filename = "./figures/Figure9_hist_plot_SFI_vs_NIT.png")
+hist(res_SFI_NIT$pvalue[res_SFI_NIT$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 1: SFI_NIT",xlab = "p-valores" )
+```
+
+##### Agrupamiento genético (gene clustering)
+
+A continuación se muestra un *heatmap* con los genes con mayor varianza entre las diferentes muestras (SRA_Samples) de los datos VST. Mostraremos únicamente 10 genes: 
+
+```{r cluster,message= FALSE,echo=FALSE,fig.cap="Heatmap of gene clustering", fig.align='center', fig.width=7, fig.height=6}
+library(genefilter)
+topVarGenes <- head(order(rowVars(assay(vsd)), decreasing = TRUE), 10)
+
+mat  <- assay(vsd)[topVarGenes, ]
+mat  <- mat - rowMeans(mat)
+anno <- as.data.frame(colData(vsd)[, c("SRA_Sample","Group")]) 
+
+annotation_colors = list(  Group = c(SFI="blue", NIT="green",ELI="red"))
+
+pheatmap(mat, annotation_col = anno, cellheight = 7.95,cellwidth = 7.95,col = colors, cex = 0.75,cluster_cols = TRUE,annotation_legend = TRUE,annotation_colors = annotation_colors,main = "Heatmap o mapa de calor con los datos VST", filename = "./figures/Figure10_pheatmap_vst_trans_values.pdf")
+```
+
+```{r cluster_save,message= FALSE,echo=FALSE,fig.cap="Heatmap of gene clustering",fig.align='center', fig.width=7, fig.height=6}
+png(filename = "./figures/Figure10_pheatmap_vst_trans_values.png")
+pheatmap(mat, annotation_col = anno, cellheight = 7.95,cellwidth = 7.95,col = colors, cex = 0.75,cluster_cols = TRUE,annotation_legend = TRUE,annotation_colors = annotation_colors,main = "Heatmap o mapa de calor con los datos VST")
+```
+
+#### Comparación 2: ELI vs NIT
+
+Para la comparación 2, los gráficos que se llevan a cabo son los mismos que para la comparación 1, utilizando los mismos pasos también. Por ello, únicamente se van a mostrar los resultados obtenidos. 
+
+##### Counts plot 
+
+```{r count2,message=FALSE, fig.align='center', fig.width=5, fig.height=4, echo=FALSE,fig.cap="Count plot para comparación ELI vs NIT"}
+topGene <- rownames(res_ELI_NIT)[which.min(res_ELI_NIT$padj)]
+
+library(ggbeeswarm)
+geneCounts <- plotCounts(dds, gene = topGene, intgroup = c("Group","SRA_Sample"),
+                         returnData = TRUE)
+
+
+ggplot(geneCounts, aes(x = Group, y = count,color=Group)) +
+  scale_y_log10() + geom_point(size = 3) + geom_line()+
+  ggtitle("Counts plot; comparación 2: ELI vs NIT") +
+  theme(legend.position = "none",
+        axis.title.x=element_blank(),
+        plot.title = element_text(hjust = 0.5)) +
+  ggsave("./figures/Figure11_count_plot_ELI_vs_NIT.tiff",last_plot(),"tiff",dpi=200)
+```
+
+##### Histograma p-valores
+
+```{r HIST2,echo=FALSE,fig.cap="Histograma ELI vs NIT",fig.align='center', fig.width=7, fig.height=6}
+hist(res_ELI_NIT$pvalue[res_ELI_NIT$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 2: ELI_NIT",xlab = "p-valores" )
+```
+
+```{r HIST2_save,echo=FALSE,fig.cap="Histograma ELI vs NIT", fig.align='center', fig.width=7, fig.height=6}
+png(filename = "./figures/Figure12_hist_plot_ELI_vs_NIT.png")
+hist(res_ELI_NIT$pvalue[res_ELI_NIT$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 2: ELI_NIT",xlab = "p-valores" )
+```
+
+En la comparación 2, no se ha llevado a cabo el *heatmap*, puesto que el resultado es el mismo que para la comparación 1. Esto se debe a que para llevar a cabo el gráfico se utilizan los datos del VST, y éstos son los mismos en todas las comparaciones.
+
+#### Comparación 3: ELI vs SFI
+
+Para la comparación 3, los gráficos que se llevan a cabo son los siguientes, utilizando los mismos pasos que anteriormente, por lo tanto una vez más, únicamente se mostrarán los resultados obtenidos.  
+
+##### Counts plot 
+
+```{r COUNT3,message=FALSE, fig.align='center', fig.width=5, fig.height=4, echo=FALSE, fig.cap="Count plot para comparación ELI vs SFI"}
+topGene <- rownames(res_ELI_SFI)[which.min(res_ELI_SFI$padj)]
+
+library(ggbeeswarm)
+geneCounts <- plotCounts(dds, gene = topGene, intgroup = c("Group","SRA_Sample"),
+                         returnData = TRUE)
+
+ggplot(geneCounts, aes(x = Group, y = count,color=Group)) +
+  scale_y_log10() + geom_point(size = 3) + geom_line()+
+  ggtitle("Counts plot; comparación 3: ELI vs SFI") +
+  theme(legend.position = "none",
+        axis.title.x=element_blank(),
+        plot.title = element_text(hjust = 0.5)) +
+  ggsave("./figures/Figure13_count_plot_ELI_vs_SFI.tiff",last_plot(),"tiff",dpi=200)
+```
+
+##### Histograma p-valores
+
+```{r hist3,echo=FALSE, fig.cap="Histograma ELI vs SFI", fig.align='center', fig.width=7, fig.height=6}
+hist(res_ELI_SFI$pvalue[res_ELI_SFI$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 3: ELI_SFI",xlab = "p-valores" )
+```
+
+```{r hist3_save,echo=FALSE, fig.cap="Histograma ELI vs SFI", fig.align='center', fig.width=7, fig.height=6}
+png(filename = "./figures/Figure14_hist_plot_ELI_vs_SFI.png")
+hist(res_ELI_SFI$pvalue[res_ELI_SFI$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 3: ELI_SFI",xlab = "p-valores" )
+```
+
+En este caso, como en la comparación 2, tampoco se lleva a cabo el *heatmap*, puesto que no se coje en particular los datos de la comparación para llevarlo a cabo. 
+
+**Conclusión de los gráficos llevados a cabo**
+
+Tras observar los gráficos mostrados (desde la figura 8 hasta la 14, excluyendo la figura 10), la conclusión que se obtiene es la siguiente: 
+
++ En los gráficos *count* (figuras 8, 11 y 13), se observa que en las tres comparaciones el grupo ELI tiene un conteo mayor, y en la segunda comparación las 10 muestras que lo compone están más distanciadas entre ellas, mostrado mayor variación. El grupo NIT, en las tres comparaciones se muestra similar, en la parte baja, en el conteo más bajo. En el caso del grupo SFI, estas muestras están más separadas que las del grupo NIT, y en la primera y tercera combinación (cuando está presente en la comparación) los conteos son más altos que en la comparación 2 donde se compara ELI vs NIT. 
+
++ En los histogramas (figuras 9, 12 y 14), en los tres casos el conteo mayor se da cuando el p-valor es 0. En la primera comparación, la diferencia entre el p-valor cero y el siguiente p-valor no es tan alta como en las comparaciones 2 y 3, donde el p-valor diferente a cero es mucho más bajo en comparación. Relacionado con esto último, en la primera comparación para un p-valor cuyo valor es cero hay algo más de 3000 genes, pero en las demás comparaciones (2 y 3), el p-valor con valor cero se da en más de 8000 genes (por ello la diferencia tan alta con los otros p-valores cuyos conteos son más bajos). 
+
+### Anotación de los resultados
+
+Nuestra tabla de resultados contiene los ID de los genes Ensembl. Sin embargo, trabajar con nombres alternativos puede resultar más informativo para la interpretación final. Por ello, hemos cargado el organismo humano (*org.Hs.eg.db*) de la librería del mismo nombre. 
+
+```{r message= FALSE,include=FALSE}
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+```
+
+Posteriormente, con la función *mapIds*, unimos a cada una de las comparaciones la columna *symbol* y *entrez* para que tengan el ID del gen externo. 
+
+#### Comparación 1: SFI vs NIT
+
+A continuación se muestra el *header* obtenido para la comparación 1:
+
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+res_SFI_NIT$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res_SFI_NIT),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+res_SFI_NIT$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res_SFI_NIT),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+
+resOrdered_SFI_NIT <- res_SFI_NIT[order(res_SFI_NIT$pvalue),]
+head(resOrdered_SFI_NIT)
+```
+
+#### Comparación 2: ELI vs NIT
+
+El proceso para la comparación 2 ha sido igual que para la comparación 1. El resultado obtenido es parecido, y se puede observar en el archivo csv que se ha generado. 
+
+```{r include=FALSE}
+res_ELI_NIT$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res_ELI_NIT),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+res_ELI_NIT$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res_ELI_NIT),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+
+resOrdered_ELI_NIT <- res_ELI_NIT[order(res_ELI_NIT$pvalue),]
+```
+
+
+#### Comparación 3: ELI vs SFI
+
+El proceso para la comparación 3 ha sido igual que para las comparaciones anteriores. El resultado obtenido es parecido, y se puede observar en el archivo csv que se ha generado.  
+
+```{r include=FALSE}
+res_ELI_SFI$symbol <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res_ELI_SFI),
+                     column="SYMBOL",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+res_ELI_SFI$entrez <- mapIds(org.Hs.eg.db,
+                     keys=row.names(res_ELI_SFI),
+                     column="ENTREZID",
+                     keytype="ENSEMBL",
+                     multiVals="first")
+
+resOrdered_ELI_SFI <- res_ELI_SFI[order(res_ELI_SFI$pvalue),]
+```
+
+#### Exportando los resultados 
+
+Hemos guardado los resultados en un archivo `csv`, denominado *resultados_* junto con el nombre de la comparación correspondiente. 
+
+```{r guardando,include=FALSE}
+resOrderedDF_SFI_NIT <- as.data.frame(resOrdered_SFI_NIT)
+resOrderedDF_ELI_NIT <- as.data.frame(resOrdered_ELI_NIT)
+resOrderedDF_ELI_SFI <- as.data.frame(resOrdered_ELI_SFI)
+write.csv(resOrderedDF_SFI_NIT, file = "./results/resultados_SFI_NIT.csv")
+write.csv(resOrderedDF_ELI_NIT, file = "./results/resultados_ELI_NIT.csv")
+write.csv(resOrderedDF_ELI_SFI, file = "./results/resultados_ELI_SFI.csv")
+```
+
+#### Visualización de la expresión diferencial
+
+Una manera de llevar a cabo la visualización de la expresión diferencial es mediante el uso de *volcano-plots*. Estos gráficos muestran la cantidad de genes con un gran *fold-change* y también si su expresión es significativa o no. En este caso, se ha llevado a cabo un gráfico por cada una de las comparaciones descritas durante toda la práctica. En el eje x, se muestra el cambio de expresión en escala logarítmica (el efecto biológico) y en el eje *y* el logaritmo (negativo) del valor de *p*. En este caso, en los tres Volcano-Plots se ha optado por representar el símbolo del gen (*symbol column of the DF*). 
+
+Para llevar a cabo los gráficos, se ha utilizado el paquete de reciente creación *EnhancedVolcano* (@blighe2018enhancedvolcano). Mediante la función con el mismo nombre, se han generado los tres gráficos tal y como se muestra a continuación, con un valor del *p cut-off* de 0.05.  
+
+##### Comparación 1: SFI vs NIT
+
+```{r volcano1,echo=FALSE, fig.cap="Volcano plot comparación 1, SFI vs NIT", warning=FALSE,message=FALSE, fig.align='center', fig.width=7, fig.height=6}
+library(EnhancedVolcano)
+EnhancedVolcano(resOrderedDF_SFI_NIT,
+    lab = resOrderedDF_SFI_NIT$symbol,
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    xlim = c(-2, 2),
+    ylim = c(0, 8),
+    title = "Volcano plot, comparación 1: SFI vs NIT",
+    subtitle = "Expresión diferencial",
+    labSize = 4.0,
+    pCutoff = 0.05)
+```
+
+```{r volcano1_save,echo=FALSE, fig.cap="Volcano plot comparación 1, SFI vs NIT", warning=FALSE, message=FALSE}
+png(filename = "./figures/Figure15_Volcano_plot_SFI_vs_NII.png")
+EnhancedVolcano(resOrderedDF_SFI_NIT,
+    lab = resOrderedDF_SFI_NIT$symbol,
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    xlim = c(-2, 2),
+    ylim = c(0, 8),
+    title = "Volcano plot, comparación 1: SFI vs NIT",
+    subtitle = "Expresión diferencial",
+    labSize = 4.0,
+    pCutoff = 0.05)
+```
+
+##### Comparación 2: ELI vs NIT
+
+```{r volcano2,echo=FALSE,  fig.cap="Volcano plot comparación 2, ELI vs NIT", warning=FALSE, fig.align='center', fig.width=7, fig.height=6, message=FALSE }
+EnhancedVolcano(resOrderedDF_ELI_NIT,
+    lab = resOrderedDF_ELI_NIT$symbol,
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    xlim = c(-2, 2),
+    ylim = c(0, 8),
+    title = "Volcano plot, comparación 2: ELI vs NIT",
+    subtitle = "Expresión diferencial",
+    labSize = 4.0,
+    pCutoff = 0.05)
+```
+
+```{r volcano2_save,echo=FALSE,  fig.cap="Volcano plot comparación 2, ELI vs NIT", warning=FALSE, message=FALSE }
+png(filename = "./figures/Figure16_Volcano_plot_ELI vs NIT.png")
+EnhancedVolcano(resOrderedDF_ELI_NIT,
+    lab = resOrderedDF_ELI_NIT$symbol,
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    xlim = c(-2, 2),
+    ylim = c(0, 8),
+    title = "Volcano plot, comparación 2: ELI vs NIT",
+    subtitle = "Expresión diferencial",
+    labSize = 4.0,
+    pCutoff = 0.05)
+```
+
+##### Comparación 3: ELI vs SFI
+
+```{r volcano3,echo=FALSE, fig.cap="Volcano plot comparación 3, ELI vs SFI", fig.align='center', fig.width=7, fig.height=6, warning=FALSE, message=FALSE}
+EnhancedVolcano(resOrderedDF_ELI_SFI,
+    lab = resOrderedDF_ELI_SFI$symbol,
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    xlim = c(-2, 2),
+    ylim = c(0, 8),
+    title = "Volcano plot, comparación 3: ELI vs SFI",
+    subtitle = "Expresión diferencial",
+    labSize = 4.0,
+    pCutoff = 0.05)
+```
+
+```{r volcano3_save,echo=FALSE, fig.cap="Volcano plot comparación 3, ELI vs SFI", warning=FALSE, message=FALSE}
+png(filename = "./figures/Figure17_Volcano_plot_ELI vs SFI.png")
+EnhancedVolcano(resOrderedDF_ELI_SFI,
+    lab = resOrderedDF_ELI_SFI$symbol,
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    xlim = c(-2, 2),
+    ylim = c(0, 8),
+    title = "Volcano plot, comparación 3: ELI vs SFI",
+    subtitle = "Expresión diferencial",
+    labSize = 4.0,
+    pCutoff = 0.05)
+```
+
+**Comentario general sobre los Volcano-Plots de las tres comparaciones**
+
+Resulta complicado anotar todos los genes observados en los tres Volcano-Plots debido al gran número de genes que se muestran. En los Volcano plot, observamos en la zona marcada en rojo los genes que superan los umbrales establecidos de *Log Fold Change* y *FDR*. En la parte roja izquierda se muestran los genes *downregulated* y en la parte roja derecha los *upregulated*. Aunque a primera vista pueda parecer que el número de genes que se muestra es excesivo, estos gráficos ayudan a visibilizar los genes más significativos según su p-valor y también observar cúales tienen un *fold change* mayor. 
+
+### Búsqueda de patrones de expresión y agrupación de las muestras 
+
+En este apartado se llevan a cabo las comparaciones entre los distintos grupos. 
+
+#### Diagrama de Venn 
+
+Un método para la agrupación de las muestras es el uso del diagrama de Venn. Para llevarlo a cabo, se han cogido las columnas del p-valor de los *dataframes* generados anteriormente en las anotaciones de los resultados (en las tres comparaciones). Con estas tres columnas, hemos generado una matriz y con la función *decideTests* se han anotado y contado los genes seleccionados en las tres comparaciones mencionadas durante este análisis. Posteriormente, con los genes seleccionados, se ha llevado a cabo el diagrama de Venn. 
+
+Además, tal y como se puede observar a continuación, obtenemos un resumen de la cantidad de genes significativos y no significativos en cada unas de las comparaciones. Posteriormente, con esos datos se lleva a cabo el diagrama, tal y como se muestra en la siguiente imagen: 
+
+```{r VennDiagram, echo=FALSE,fig.cap=" Diagrama de Venn que muestra los genes en común entre las tres comparaciones llevadas a cabo", message=FALSE, warning=FALSE, fig.align='center', fig.width=7, fig.height=6}
+library(limma)
+a<-as.matrix(resOrdered_SFI_NIT$pvalue)
+b<-as.matrix(resOrdered_ELI_NIT$pvalue)
+c<-as.matrix(resOrdered_ELI_SFI$pvalue)
+
+decide_all<-cbind(a,b,c) 
+colnames(decide_all)<-c("SFI_vs_NIT","ELI_vs_NIT","ELI_vs_SFI")
+  
+res<-decideTests(decide_all, method="separate", adjust.method="fdr", p.value=0.1, lfc=1)
+sum.res.rows<-apply(abs(res),1,sum)
+res.selected<-res[sum.res.rows!=0,] 
+print(summary(res))
+
+vennDiagram(res.selected[,1:3], cex=0.9)
+```
+
+
+```{r VennDiagram_save, echo=FALSE,fig.cap=" Diagrama de Venn que muestra los genes en común entre las tres comparaciones llevadas a cabo"}
+png(filename = "./figures/Figure18_vennDiagram.png")
+vennDiagram(res.selected[,1:3], cex=0.9)
+```
+
+Tal y como se observa en el resumen, la comparación SFI vs NIT tiene `r summary(res)[2,1]` genes significativos, pero todos ellos están en común con las otras dos comparaciones. La comparación ELI vs NIT, tiene `r summary(res)[2,2]` genes significativos, de los cuales `r summary(res)[2,1]` son los mismos que comentábamos para el grupo 1, 5630 son en común con la comparación ELI vs SFI y los 562 restantes son únicamente significativos para esa comparación. En la última comparación, ELI vs SFI, están de nuevo los `r summary(res)[2,1]` genes en común entre los tres, y luego los 5630 genes en común con el grupo 2, ELI vs NIT, de sus `r summary(res)[2,3]` genes significativos en total que tiene. 
+
+#### Función degPatterns del paquete DEGreport
+
+Un método para llevar a cabo la búsqueda de patrones de expresión, es mediante la función *degPatterns* del paquete *DEGreport*. Esta función genera grupos de genes utilizando su expresión. Es importante destacar que esta función no calcula la diferencia significativa entre los grupos, por lo que la matriz que le introducimos como *input* debe estar filtrada para contener únicamente los genes que son significantemente diferentes. Visualizar los cambios en los patrones de expresión ayuda a identificar los grupos de genes que tienen una tendencia similar, que posteriormente pueden ayudar a determinar qué razón biológica está detrás de los cambios que observamos. A continuación se muestra el cambio de patrón entre los tres grupos: 
+
+```{r pattern1,echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Boxplot comparativo de z-score para la abundancia entre las muestras de cada grupo según los genes", fig.align='center', fig.width=7, fig.height=6}
+library(DEGreport)
+ma_SFI_NIT = assay(vst(dds))[row.names(res_SFI_NIT)[1:100],]
+pattern_SFI_NIT <- degPatterns(ma_SFI_NIT, metadata=  colData(dds), time = "Group")
+```
+
+```{r pattern1_save,include=FALSE, message=FALSE, warning=FALSE, fig.cap="Boxplot comparativo de z-score para la abundancia entre las muestras de cada grupo según los genes"}
+png(filename = "./figures/Figure19_pattern.png")
+ma_SFI_NIT = assay(vst(dds))[row.names(res_SFI_NIT)[1:100],]
+pattern_SFI_NIT <- degPatterns(ma_SFI_NIT, metadata=  colData(dds), time = "Group")
+```
+
+Es sabido que los valores de expresión de los genes normalmente se convierten a *Z-scores* con el objetivo de visualizarlos. El valor de *z* para una muestra indica el número de desviaciones estándar alejadas de la media de expresión en la referencia. 
+
+### Análisis de significación biológica (“Gene Enrichment Analysis”)
+
+Para llevar a cabo la significación biológica de los resultados, se utilizará el paquete *clusterProfiler*. El análisis de significación biológica se aplicará sobre las anotaciones llevadas a cabo anteriormente para cada comparación. Se utilizará la función *enrichGo* para el análisis de *enrichment* (significación). Los atributos introducidos a la función *enrichGo* son los siguientes: para *gene*, un vector de caracteres que hemos generado para la comparación, para *OrgDB*, nuestro organismo (org.Hs.eg.db), para *ont*, el proceso biológico de los genes diferenciados, el *pAdjustMethod*, BH- Benjamini-Hochberg y finalmente el *p-value cut-off* en 0.05. 
+
+Los datos obtenidos se han exportado a archivos *csv* en la carpeta de resultados, dentro del directorio de trabajo marcado al principio. 
+
+```{r clusterprofiler_package,include=FALSE}
+library(clusterProfiler)
+```
+
+#### Comparación 1: SFI vs NIT
+
+Los resultados para la comparación 1, entre los grupos SFI y NIT, se muestran en la siguiente tabla: 
+
+```{r comp1,echo=FALSE}
+OrgDb <- org.Hs.eg.db 
+
+geneList_SFI_NIT <- as.vector(resOrderedDF_SFI_NIT$log2FoldChange)
+names(geneList_SFI_NIT) <- resOrderedDF_SFI_NIT$entrez
+gene_SFI_NIT <- na.omit(resOrderedDF_SFI_NIT$entrez)
+
+# Enrichment analysis
+ego_SFI_NIT <- clusterProfiler::enrichGO(gene          = gene_SFI_NIT,
+                                 OrgDb         = OrgDb,
+                                 ont           = "BP",
+                                 pAdjustMethod = "BH",
+                                 pvalueCutoff  = 0.05,
+                                 qvalueCutoff  = 0.05, 
+                                 readable      = TRUE)
+#head(summary(ego_SFI_NIT)[,-8])
+
+# guardando el resultado enrichment en el directorio como un csv
+write.csv(as.data.frame(ego_SFI_NIT), 
+             file =paste0("./results/","CusterProfiler.Results.SFI_NIT.csv"), 
+             row.names = FALSE)
+
+Tab.react1 <- read.csv2(file.path("./results/CusterProfiler.Results.SFI_NIT.csv"), 
+                       sep = ",", header = TRUE, row.names = 1)
+
+Tab.react1 <- Tab.react1[1:5, 1:5]
+knitr::kable(Tab.react1, booktabs = TRUE, caption = "First rows and columns for ClusterProfiler results on SFI vs NIT comparison")
+```
+
+Además, para mostrar los resultados obtenidos, se llevan a cabo diferentes gráficos. El primero de ellos es un *barplot*, donde dependiendo del p-valor ajustado, se muestran los resultados del análisis de enrichment. 
+
+```{r echo=FALSE, fig.cap="Barplot del análisis de enrichment para la comparación SFI y NIT", fig.align='center', fig.width=7, fig.height=6}
+barplot_SFI_NIT<-barplot(ego_SFI_NIT, showCategory=25)
+barplot_SFI_NIT
+```
+
+```{r echo=FALSE, fig.cap="Barplot del análisis de enrichment para la comparación SFI y NIT", fig.align='center', fig.width=7, fig.height=6}
+png(filename = "./figures/Figure20_boxplot_comp1.png")
+barplot_SFI_NIT<-barplot(ego_SFI_NIT, showCategory=25)
+barplot_SFI_NIT
+```
+
+Otra forma de visualizar los términos GO es utilizando los mapas de *enrichment*. En este caso, se ha utilizado la función *emapplot* para visualizar los resultados. Este mapa muestra los primeros 20 términos GO de la comparación citada, cada uno con el color de *p* que le corresponda según su valor. Los colores que expresan a cada término GO son los mismos que en el *barplot* mostrado anteriormente. 
+
+```{r enrichplot1, fig.cap="Análisis enrichment de los 20 términos GO más relevantes en la comparación", echo=FALSE, fig.align='center', fig.width=7, fig.height=6}
+emapplot(ego_SFI_NIT,pie="count", pie_scale=1.5, layout="nicely",color = "p.adjust",showCategory = 20) + ggtitle("Enrichplot para los términos GO entre SFI y NIT.")
+```
+
+```{r enrichplot1_save, fig.cap="Análisis enrichment de los 20 términos GO más relevantes en la comparación", echo=FALSE, fig.align='center', fig.width=7, fig.height=6}
+png(filename = "./figures/Figure21_emapplot_comp1.png")
+emapplot(ego_SFI_NIT,pie="count", pie_scale=1.5, layout="nicely",color = "p.adjust",showCategory = 20) + ggtitle("Enrichplot para los términos GO entre SFI y NIT.")
+```
+
+Otra posible forma de visualizar los resultados es mediante el gráfico *network* utilizando la función *cnetplot*. Esta función lo que hace es unir los genes con sus conceptos biológicos. Sin embargo, en este caso el cnetplot está sobre-cargado, por lo tanto no es posible visualizar con claridad los resultados. También es posible llevar a cabo un heatplot pero ocurre lo mismo, que apenas es posible distinguir los resultados debido al gran número de términos. 
+
+```{r include=FALSE}
+#cnetplot(ego_SFI_NIT, categorySize = "geneNum", schowCategory = 1, vertex.label.cex = 0.75) 
+#heatplot <- heatplot(ego_SFI_NIT);
+```
+
+#### Comparación 2: ELI vs NIT
+
+Los resultados para la comparación 2, entre los grupos ELI y NIT, se muestran en la siguiente tabla: 
+  
+```{r comp2,echo=FALSE}
+OrgDb <- org.Hs.eg.db 
+
+geneList_ELI_NIT <- as.vector(resOrderedDF_ELI_NIT$log2FoldChange)
+names(geneList_ELI_NIT) <- resOrderedDF_ELI_NIT$entrez
+gene_ELI_NIT <- na.omit(resOrderedDF_ELI_NIT$entrez)
+
+# Enrichment analysis
+ego_ELI_NIT <- clusterProfiler::enrichGO(gene          = gene_ELI_NIT,
+                                         OrgDb         = OrgDb,
+                                         ont           = "BP",
+                                         pAdjustMethod = "BH",
+                                         pvalueCutoff  = 0.05,
+                                         qvalueCutoff  = 0.05, 
+                                         readable      = TRUE)
+#head(summary(ego_ELI_NIT)[,-8])
+
+# guardando el resultado enrichment en el directorio como un csv
+write.csv(as.data.frame(ego_ELI_NIT), 
+          file =paste0("./results/","CusterProfiler.Results.ELI_NIT.csv"), 
+          row.names = FALSE)
+
+Tab.react2 <- read.csv2(file.path("./results/CusterProfiler.Results.ELI_NIT.csv"), 
+                        sep = ",", header = TRUE, row.names = 1)
+
+Tab.react2 <- Tab.react2[1:5, 1:5]
+knitr::kable(Tab.react2, booktabs = TRUE, caption = "First rows and columns for ClusterProfiler results on ELI vs NIT comparison")
+```
+
+Además, para mostrar los resultados obtenidos, se lleva a cabo también el *barplot*, donde dependiendo del p-valor ajustado, se muestran los resultados del análisis de *enrichment*. 
+
+```{r echo=FALSE, fig.cap="Barplot del análisis de enrichment para la comparación ELI y NIT", fig.align='center', fig.width=7, fig.height=6}
+barplot_ELI_NIT<-barplot(ego_ELI_NIT, showCategory=25)
+barplot_ELI_NIT
+```
+
+```{r echo=FALSE, fig.cap="Barplot del análisis de enrichment para la comparación ELI y NIT", fig.align='center', fig.width=7, fig.height=6}
+png(filename = "./figures/Figure22_boxplot_comp2.png")
+barplot_ELI_NIT<-barplot(ego_ELI_NIT, showCategory=25)
+barplot_ELI_NIT
+```
+
+Otra forma de visualizar los términos GO es utilizando los mapas de *enrichment*.En este caso, se ha utilizado una vez más la función *emapplot* para visualizar los resultados. Este mapa muestra los primeros 20 términos GO de la comparación citada, cada uno con el color de *p* que le corresponda según su valor. Los colores que expresan a cada término GO son los mismos que en el *barplot* mostrado anteriormente. 
+
+```{r enrichplot2, fig.cap="Análisis enrichment de los 20 términos GO más relevantes en la comparación", echo=FALSE, fig.align='center', fig.width=7, fig.height=6}
+emapplot(ego_ELI_NIT,pie="count", pie_scale=1.5, layout="nicely",color = "p.adjust",showCategory = 20) + ggtitle("Enrichplot para los términos GO entre ELI y NIT.")
+```
+
+```{r enrichplot2_save, fig.cap="Análisis enrichment de los 20 términos GO más relevantes en la comparación", echo=FALSE, fig.align='center', fig.width=7, fig.height=6}
+png(filename = "./figures/Figure23_emapplot_comp2.png")
+emapplot(ego_ELI_NIT,pie="count", pie_scale=1.5, layout="nicely",color = "p.adjust",showCategory = 20) + ggtitle("Enrichplot para los términos GO entre ELI y NIT.")
+```
+
+#### Comparación 3: ELI vs SFI
+
+Los resultados para la comparación 3, entre los grupos ELI y SFI, se muestran en la siguiente tabla: 
+  
+```{r comp3,echo=FALSE}
+OrgDb <- org.Hs.eg.db 
+
+geneList_ELI_SFI <- as.vector(resOrderedDF_ELI_SFI$log2FoldChange)
+names(geneList_ELI_SFI) <- resOrderedDF_ELI_SFI$entrez
+gene_ELI_SFI <- na.omit(resOrderedDF_ELI_SFI$entrez)
+
+# Enrichment analysis
+ego_ELI_SFI <- clusterProfiler::enrichGO(gene          = gene_ELI_SFI,
+                                         OrgDb         = OrgDb,
+                                         ont           = "BP",
+                                         pAdjustMethod = "BH",
+                                         pvalueCutoff  = 0.05,
+                                         qvalueCutoff  = 0.05, 
+                                         readable      = TRUE)
+#head(summary(ego_ELI_SFI)[,-8])
+
+# guardando el resultado enrichment en el directorio como un csv
+write.csv(as.data.frame(ego_ELI_SFI), 
+          file =paste0("./results/","CusterProfiler.Results.ELI_SFI.csv"), 
+          row.names = FALSE)
+
+Tab.react3 <- read.csv2(file.path("./results/CusterProfiler.Results.ELI_SFI.csv"), 
+                        sep = ",", header = TRUE, row.names = 1)
+
+Tab.react3 <- Tab.react3[1:5, 1:5]
+knitr::kable(Tab.react3, booktabs = TRUE, caption = "First rows and columns for ClusterProfiler results on ELI vs SFI comparison")
+```
+
+Además, para mostrar los resultados obtenidos, se lleva a cabo primeramente el *barplot* y posteriormente el *emapplot* tal y como se ha observado en las dos comparaciones anteriores. 
+
+```{r echo=FALSE, fig.cap="Barplot del análisis de enrichment para la comparación ELI y SFI", fig.align='center', fig.width=7, fig.height=6}
+barplot_ELI_SFI<-barplot(ego_ELI_SFI, showCategory=25)
+barplot_ELI_SFI
+```
+
+```{r echo=FALSE, fig.cap="Barplot del análisis de enrichment para la comparación ELI y SFI", fig.align='center', fig.width=7, fig.height=6}
+png(filename = "./figures/Figure24_boxplot_comp3.png")
+barplot_ELI_SFI<-barplot(ego_ELI_SFI, showCategory=25)
+barplot_ELI_SFI
+```
+
+Los primeros 20 términos GO de la comparación con la función *emapplot* son los siguientes: 
+
+```{r enrichplot3, fig.cap="Análisis enrichment de los 20 términos GO más relevantes en la comparación", echo=FALSE, fig.align='center', fig.width=7, fig.height=6}
+emapplot(ego_ELI_SFI,pie="count", pie_scale=1.5, layout="nicely",color = "p.adjust",showCategory = 20) + ggtitle("Enrichplot para los términos GO entre ELI y SFI.")
+```
+
+```{r enrichplot3_save, fig.cap="Análisis enrichment de los 20 términos GO más relevantes en la comparación", echo=FALSE, fig.align='center', fig.width=7, fig.height=6}
+png(filename = "./figures/Figure25_emapplot_comp3.png")
+emapplot(ego_ELI_SFI,pie="count", pie_scale=1.5, layout="nicely",color = "p.adjust",showCategory = 20) + ggtitle("Enrichplot para los términos GO entre ELI y SFI.")
+```
+
+## Archivos generados y software
+
+Una vez que el proceso se lleva a cabo, es importante tener un listado de los archivos que se han generado en el análisis. Estos archivos resumen los resultados que se han obtenido y son de gran ayuda para la interpretación biológica. La siguiente tabla muestra el listados de los archivos generados en el estudio: 
+
+```{r listOfFiles, echo=FALSE}
+listOfFiles <- dir("./results/") 
+knitr::kable(
+  listOfFiles, booktabs = TRUE,
+  caption = 'List of files generated in the analysis',
+  col.names="List_of_Files"
+)
+```
+
+Para la realización de este análisis tal y como es sabido se ha utilizado el software R. Para ello, ha sido necesario cargar varios paquetes nuevos al programa, muchos de ellos vinculados a Bioconductor. Algunos de esos ejemplos son los paquetes DESeq2, pheatmap, ggbeeswarm, genefilter, AnnotationDbi, EnhancedVolcano, DEGreport o clusterProfiler. 
+
+Como último paso en el *workflow* de este análisis, es posible utilizar la función *sessionInfo* que da la información de las versiones y los paquetes utilizados. De esta manera, se asegura la reproductividad del análisis con los mismos números y resultados obtenidos en caso de utilizar los mismos paquetes y versiones, y es más fácil observar qué paquete ha podido cambiar en un futuro. 
+
+```{r sessionInfo, echo=FALSE}
+sessionInfo()
+```
+
+# Resultados 
+
+Se ha observado que las tablas finales para cada comparación muestran los mismos resultados. En las tres comparaciones, las cinco primeras secuencias que más se repiten son: *axogenesis* (GO:0007409),  *small molecule catabolic process* (GO:0044282), *organic anion transport* (GO:0015711), *gland development* (GO:0048732) y *nuclear división* (GO:0000280).  En la tabla también se puede ver el conteo de estos términos (número de genes asociados), y en el *csv* generado de cada comparación, es posible observar los ID de los genes asociados al término GO. Tanto en la tabla (5 términos) como en el gráfico de barras y *emapplot* (20 términos), se observa que hay una igualdad entre las comparaciones. Sin embargo, aunque los primeros términos más significativos muestren la igualdad, con la función *all* se ha comprobado que los resultados del análisis *enrichment* llevado a cabo en cada comparación no es igual, y que por lo tanto los *csv* generados no son del todo iguales y que algunos términos y genes son diferentes. 
+
+```{r include=FALSE}
+all(as.data.frame(ego_ELI_SFI)==as.data.frame(ego_ELI_NIT))
+all(as.data.frame(ego_ELI_SFI)==as.data.frame(ego_SFI_NIT))
+all(as.data.frame(ego_ELI_NIT)==as.data.frame(ego_SFI_NIT))
+```
+
+# Discusión 
+
+Una limitación que puedo observar en el análisis llevado a cabo es el método de proceder en la comparación de los grupos en comparación con el estudio de microarrays realizado en la práctica anterior. En la pasada práctica, la comparación entre los diferentes niveles del factor que definía de qué clase eran las muestras me pareció más sencilla de llevar a cabo, puesto que se hacía en un único paso mediante la función *makeContrasts* para ver los efectos de cada tratamiento. En este caso, se ha tenido que repetir todo individualmente, lo que tampoco ha sido difícil pero indudablemente sí que ha sido más costoso. Finalmente, no encontrar diferencias entre las comparaciones llevadas a cabo, al menos en los primeros términos, resulta un tanto extraño, aunque quizá es debido a las muestras seleccionadas aleatoriamente con la semilla establecida en la primera parte del análisis o que tampoco hay tanta diferencia entre los tres grupos analizados. Habría que analizar más detalladamente el csv y ver dónde están las diferencias. 
+ 
+# Apéndice 
+
+A continuación se muestra el script utilizado para la realización de esta práctica, aunque se aconseja su visualización en el archivo de R proporcionado en el repositorio de GitHub para poder analizarlo según va corriendo el programa. 
+
+```{r script_General, eval=FALSE}
+## Transforming the data to select the 30 samples:
+targets<-read.csv("targets.csv",sep = ",")
+counts<-read.csv("counts.csv",header = TRUE,sep = ";")
+counts$X<-gsub("\\..*", "", counts$X, fixed = FALSE)
+
+setwd(".")
+dir.create("results")
+dir.create("figures")
+
+library(dplyr)
+a<-split(targets,targets$Group)
+
+gen<-function(df){
+  set.seed(123)
+  
+  x<-as.data.frame(df[sample(nrow(df), 10),])
+  
+  return(x)
+  
+}
+
+gen(targets)
+l1<-lapply(a, gen)
+fin<-bind_rows(l1)
+
+library(tidyr)
+levels(fin$Sample_Name) <- gsub("-", ".", levels(fin$Sample_Name)) # nos hemos dado cuenta que en counts tienen puntos y en targets -  entonces hemos sustituido todo. 
+counts.long<-counts %>%
+  gather(Sample_Name,value,-X) %>%
+  left_join(fin,by="Sample_Name") %>%
+  filter(complete.cases(.))
+
+
+library(tibble) # for the column_to_rownames function
+
+counts.long2<-counts.long %>%
+  dplyr::select(X,value,SRA_Sample)
+
+counts.long3<-counts.long2 %>%
+  spread(SRA_Sample,value) %>% 
+  column_to_rownames(var="X") %>%
+  as.matrix()
+
+fin<- fin %>%
+  arrange(SRA_Sample)
+write.csv(fin,file = "./results/seleccion_targets.csv")
+
+all(as.vector(fin$SRA_Sample) == colnames(counts.long3))
+
+# DESeq2 object
+library(DESeq2)
+ddsMat <- DESeqDataSetFromMatrix(countData = counts.long3,
+                                 colData = fin,  
+                                 design = ~ Group)
+ddsMat
+### Preprocesado de los datos: filtraje y normalización
+
+#### Pre-filtrado del conjunto de datos
+ddsMat <- ddsMat[ rowSums(counts(ddsMat)) > 1, ]
+nrow(ddsMat)
+#### Transformación para estabilizar la varianza (vst) 
+vsd <- vst(ddsMat, blind = FALSE)
+head(assay(vsd), 3)
+colData(vsd)
+library(ggplot2)
+
+df <- bind_rows(
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"))
+
+colnames(df)[1:2] <- c("x", "y")  
+
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 250) +
+  coord_fixed() + facet_grid( . ~ transformation)  +
+  ggtitle("Transformación VST") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank())+
+  ggsave("./figures/Figure1_transf_vst.tiff",last_plot(),"tiff",dpi=200)
+
+rld <- rlog(ddsMat, blind = FALSE) # rlog transformation
+
+ddsMat <- estimateSizeFactors(ddsMat) # for the log2 transformation
+
+df <- bind_rows(
+  as_data_frame(log2(counts(ddsMat, normalized=TRUE)[, 1:2]+1)) %>%
+    mutate(transformation = "log2(x + 1)"),
+  as_data_frame(assay(vsd)[, 1:2]) %>% mutate(transformation = "vst"),
+  as_data_frame(assay(rld)[, 1:2]) %>% mutate(transformation = "rlog"))
+
+colnames(df)[1:2] <- c("x", "y")  
+
+ggplot(df, aes(x = x, y = y)) + geom_hex(bins = 80) +
+  coord_fixed() + facet_grid( . ~ transformation) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        legend.title = element_blank(),
+        plot.title = element_text(hjust = 0.5)) +
+  ggtitle("Todas las transformaciones: log2, rlog y vst") +
+  ggsave("./figures/Figure2_all_transformations.tiff",last_plot(),"tiff",dpi=200)
+
+a<-as.data.frame(log2(assay(ddsMat)+1)) %>%
+  gather(SRA_Sample,value) %>%
+  left_join(fin %>% select(SRA_Sample,Group),by="SRA_Sample")
+
+ggplot(a,aes(x=SRA_Sample,y=value,fill=Group))+
+  geom_boxplot()+
+  theme_classic()+
+  labs(x="",y="")+
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        axis.text.x = element_text(size=7,angle = 90,vjust = .5),
+        plot.title = element_text(hjust = 0.5))+
+  ggtitle("Transformación log2")+
+  ggsave("./figures/Figure3_transf_log2.tiff",last_plot(),"tiff",dpi=200)
+
+b<-as.data.frame(assay(rld)) %>%
+  gather(SRA_Sample,value) %>%
+  left_join(fin %>% select(SRA_Sample,Group),by="SRA_Sample")
+
+ggplot(b,aes(x=SRA_Sample,y=value,fill=Group))+
+  geom_boxplot()+
+  theme_classic()+
+  labs(x="",y="")+
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        axis.text.x = element_text(size=7,angle = 90,vjust = .5),
+        plot.title = element_text(hjust = 0.5))+
+  ggtitle("Transformación rld")+
+  ggsave("./figures/Figure4_transf_rld.tiff",last_plot(),"tiff",dpi=200)
+
+c<-as.data.frame(assay(vsd)) %>%
+  gather(SRA_Sample,value) %>%
+  left_join(fin %>% select(SRA_Sample,Group),by="SRA_Sample")
+
+ggplot(c,aes(x=SRA_Sample,y=value,fill=Group))+
+  geom_boxplot()+
+  theme_classic()+
+  labs(x="",y="")+
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        axis.text.x = element_text(size=7,angle = 90,vjust = .5),
+        plot.title = element_text(hjust = 0.5))+
+  ggtitle("Transformación vst")+
+  ggsave("./figures/Figure5_transf_vst.tiff",last_plot(),"tiff",dpi=200)
+
+sampleDists <- dist(t(assay(vsd)))
+library(pheatmap)
+library(RColorBrewer)
+
+sampleDistMatrix <- as.matrix( sampleDists )
+rownames(sampleDistMatrix) <- paste( vsd$Group, vsd$SRA_Sample, sep = " - " ) ## Tenemos Group y Sra sample
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "GnBu")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors,
+         cellheight = 7.95,cellwidth = 7.95, 
+         main="Mapa de calor, distancias entre las 30 muestras", adj = 0, line = 0)
+png(filename = "./figures/Figure6_pheatmap.png")
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors,
+         cellheight = 7.95,cellwidth = 7.95, 
+         main="Mapa de calor, distancias entre las 30 muestras", adj = 0, line = 0)
+#### Gráfico PCA
+pcaData <-plotPCA(vsd, intgroup = c("Group", "SRA_Sample"),returnData = TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar")) 
+
+ggplot(pcaData, aes(PC1, PC2, color=vsd$Group)) +
+  geom_point(size=3) +
+  theme_classic()+
+  ggtitle("PCA para cada grupo de las 30 muestras") +
+  theme(legend.position = "right",
+        plot.title = element_text(hjust = 0.5)) +
+  labs(color="Grupos") +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_cartesian()+
+  ggsave("./figures/Figure7_PCA.tiff",last_plot(),"tiff",dpi=200)
+
+dds <- DESeq(ddsMat, parallel =TRUE)
+dds
+
+#### SFI vs NIT
+res_SFI_NIT <- results(dds, contrast=c("Group","SFI","NIT"))
+mcols(res_SFI_NIT, use.names = TRUE)
+summary(res_SFI_NIT)
+res.05 <- results(dds, alpha = 0.05)
+table(res.05$padj < 0.05)
+##### Testeado múltiple
+sum(res_SFI_NIT$pvalue < 0.05, na.rm=TRUE)
+sum(res_SFI_NIT$padj < 0.05, na.rm=TRUE)
+#### ELI vs NIT
+res_ELI_NIT <- results(dds, contrast=c("Group","ELI","NIT"))
+mcols(res_ELI_NIT, use.names = TRUE)
+summary(res_ELI_NIT)
+res.05 <- results(dds, alpha = 0.05)
+table(res.05$padj < 0.05)
+##### Testeado múltiple
+sum(res_ELI_NIT$pvalue < 0.05, na.rm=TRUE)
+sum(res_ELI_NIT$padj < 0.05, na.rm=TRUE)
+#### ELI vs SFI
+res_ELI_SFI <- results(dds, contrast=c("Group","ELI","SFI"))
+mcols(res_ELI_SFI, use.names = TRUE)
+summary(res_ELI_SFI)
+res.05 <- results(dds, alpha = 0.05)
+table(res.05$padj < 0.05)
+##### Testeado múltiple
+sum(res_ELI_SFI$pvalue < 0.05, na.rm=TRUE)
+sum(res_ELI_SFI$padj < 0.05, na.rm=TRUE)
+
+### Gráficos de los resultados
+topGene <- rownames(res_SFI_NIT)[which.min(res_SFI_NIT$padj)]
+
+library(ggbeeswarm)
+geneCounts <- plotCounts(dds, gene = topGene, intgroup = c("Group","SRA_Sample"),
+                         returnData = TRUE)
+ggplot(geneCounts, aes(x = Group, y = count,color=Group)) +
+  scale_y_log10() + geom_point(size = 3) + geom_line()+
+  ggtitle("Counts plot; comparación 1: SFI vs NIT ") +
+  theme(legend.position = "none",
+        axis.title.x=element_blank(),
+        plot.title = element_text(hjust = 0.5)) +
+  ggsave("./figures/Figure8_count_plot_SFI_vs_NIT.tiff",last_plot(),"tiff",dpi=200)
+
+hist(res_SFI_NIT$pvalue[res_SFI_NIT$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 1: SFI_NIT",xlab = "p-valores" )
+
+png(filename = "./figures/Figure9_hist_plot_SFI_vs_NIT.png")
+hist(res_SFI_NIT$pvalue[res_SFI_NIT$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 1: SFI_NIT",xlab = "p-valores" )
+
+##### Agrupamiento genético (gene clustering)
+library(genefilter)
+topVarGenes <- head(order(rowVars(assay(vsd)), decreasing = TRUE), 10)
+
+mat  <- assay(vsd)[topVarGenes, ]
+mat  <- mat - rowMeans(mat)
+anno <- as.data.frame(colData(vsd)[, c("SRA_Sample","Group")]) 
+
+annotation_colors = list(  Group = c(SFI="blue", NIT="green",ELI="red"))
+
+pheatmap(mat, annotation_col = anno, cellheight = 7.95,cellwidth = 7.95,col = colors, 
+         cex = 0.75,cluster_cols = TRUE,annotation_legend = TRUE,
+         annotation_colors = annotation_colors,main = "Heatmap o mapa de calor con los datos VST")
+
+png(filename = "./figures/Figure10_pheatmap_vst_trans_values.png")
+pheatmap(mat, annotation_col = anno, cellheight = 7.95,cellwidth = 7.95,
+         col = colors, cex = 0.75,cluster_cols = TRUE,annotation_legend = TRUE,
+         annotation_colors = annotation_colors,main = "Heatmap o mapa de calor con los datos VST")
+
+topGene <- rownames(res_ELI_NIT)[which.min(res_ELI_NIT$padj)]
+
+library(ggbeeswarm)
+geneCounts <- plotCounts(dds, gene = topGene, intgroup = c("Group","SRA_Sample"),
+                         returnData = TRUE)
+
+
+ggplot(geneCounts, aes(x = Group, y = count,color=Group)) +
+  scale_y_log10() + geom_point(size = 3) + geom_line()+
+  ggtitle("Counts plot; comparación 2: ELI vs NIT") +
+  theme(legend.position = "none",
+        axis.title.x=element_blank(),
+        plot.title = element_text(hjust = 0.5)) +
+  ggsave("./figures/Figure11_count_plot_ELI_vs_NIT.tiff",last_plot(),"tiff",dpi=200)
+
+hist(res_ELI_NIT$pvalue[res_ELI_NIT$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 2: ELI_NIT",xlab = "p-valores" )
+
+png(filename = "./figures/Figure12_hist_plot_ELI_vs_NIT.png")
+hist(res_ELI_NIT$pvalue[res_ELI_NIT$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 2: ELI_NIT",xlab = "p-valores" )
+
+topGene <- rownames(res_ELI_SFI)[which.min(res_ELI_SFI$padj)]
+
+library(ggbeeswarm)
+geneCounts <- plotCounts(dds, gene = topGene, intgroup = c("Group","SRA_Sample"),
+                         returnData = TRUE)
+
+ggplot(geneCounts, aes(x = Group, y = count,color=Group)) +
+  scale_y_log10() + geom_point(size = 3) + geom_line()+
+  ggtitle("Counts plot; comparación 3: ELI vs SFI") +
+  theme(legend.position = "none",
+        axis.title.x=element_blank(),
+        plot.title = element_text(hjust = 0.5)) +
+  ggsave("./figures/Figure13_count_plot_ELI_vs_SFI",last_plot(),"tiff",dpi=200)
+
+hist(res_ELI_SFI$pvalue[res_ELI_SFI$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 3: ELI_SFI",xlab = "p-valores" )
+
+png(filename = "./figures/Figure14_hist_plot_ELI_vs_SFI.png")
+hist(res_ELI_SFI$pvalue[res_ELI_SFI$baseMean > 1], breaks = 0:20/20,
+     col = "grey50", border = "white",main = "Histograma p-valores; comparación 3: ELI_SFI",xlab = "p-valores" )
+
+### Anotación de los resultados
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+
+res_SFI_NIT$symbol <- mapIds(org.Hs.eg.db,
+                             keys=row.names(res_SFI_NIT),
+                             column="SYMBOL",
+                             keytype="ENSEMBL",
+                             multiVals="first")
+res_SFI_NIT$entrez <- mapIds(org.Hs.eg.db,
+                             keys=row.names(res_SFI_NIT),
+                             column="ENTREZID",
+                             keytype="ENSEMBL",
+                             multiVals="first")
+
+resOrdered_SFI_NIT <- res_SFI_NIT[order(res_SFI_NIT$pvalue),]
+head(resOrdered_SFI_NIT)
+
+res_ELI_NIT$symbol <- mapIds(org.Hs.eg.db,
+                             keys=row.names(res_ELI_NIT),
+                             column="SYMBOL",
+                             keytype="ENSEMBL",
+                             multiVals="first")
+res_ELI_NIT$entrez <- mapIds(org.Hs.eg.db,
+                             keys=row.names(res_ELI_NIT),
+                             column="ENTREZID",
+                             keytype="ENSEMBL",
+                             multiVals="first")
+
+resOrdered_ELI_NIT <- res_ELI_NIT[order(res_ELI_NIT$pvalue),]
+
+res_ELI_SFI$symbol <- mapIds(org.Hs.eg.db,
+                             keys=row.names(res_ELI_SFI),
+                             column="SYMBOL",
+                             keytype="ENSEMBL",
+                             multiVals="first")
+res_ELI_SFI$entrez <- mapIds(org.Hs.eg.db,
+                             keys=row.names(res_ELI_SFI),
+                             column="ENTREZID",
+                             keytype="ENSEMBL",
+                             multiVals="first")
+
+resOrdered_ELI_SFI <- res_ELI_SFI[order(res_ELI_SFI$pvalue),]
+
+#### Exportando los resultados 
+resOrderedDF_SFI_NIT <- as.data.frame(resOrdered_SFI_NIT)
+resOrderedDF_ELI_NIT <- as.data.frame(resOrdered_ELI_NIT)
+resOrderedDF_ELI_SFI <- as.data.frame(resOrdered_ELI_SFI)
+write.csv(resOrderedDF_SFI_NIT, file = "./results/resultados_SFI_NIT.csv")
+write.csv(resOrderedDF_ELI_NIT, file = "./results/resultados_ELI_NIT.csv")
+write.csv(resOrderedDF_ELI_SFI, file = "./results/resultados_ELI_SFI.csv")
+
+library(EnhancedVolcano)
+EnhancedVolcano(resOrderedDF_SFI_NIT,
+                lab = resOrderedDF_SFI_NIT$symbol,
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                xlim = c(-2, 2),
+                ylim = c(0, 8),
+                title = "Volcano plot, comparación 1: SFI vs NIT",
+                subtitle = "Expresión diferencial",
+                labSize = 4.0,
+                pCutoff = 0.05)
+
+png(filename = "./figures/Figure15_Volcano_plot_SFI_vs_NII.png")
+EnhancedVolcano(resOrderedDF_SFI_NIT,
+                lab = resOrderedDF_SFI_NIT$symbol,
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                xlim = c(-2, 2),
+                ylim = c(0, 8),
+                title = "Volcano plot, comparación 1: SFI vs NIT",
+                subtitle = "Expresión diferencial",
+                labSize = 4.0,
+                pCutoff = 0.05)
+
+EnhancedVolcano(resOrderedDF_ELI_NIT,
+                lab = resOrderedDF_ELI_NIT$symbol,
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                xlim = c(-2, 2),
+                ylim = c(0, 8),
+                title = "Volcano plot, comparación 2: ELI vs NIT",
+                subtitle = "Expresión diferencial",
+                labSize = 4.0,
+                pCutoff = 0.05)
+png(filename = "./figures/Figure16_Volcano_plot_ELI vs NIT.png")
+EnhancedVolcano(resOrderedDF_ELI_NIT,
+                lab = resOrderedDF_ELI_NIT$symbol,
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                xlim = c(-2, 2),
+                ylim = c(0, 8),
+                title = "Volcano plot, comparación 2: ELI vs NIT",
+                subtitle = "Expresión diferencial",
+                labSize = 4.0,
+                pCutoff = 0.05)
+
+EnhancedVolcano(resOrderedDF_ELI_SFI,
+                lab = resOrderedDF_ELI_SFI$symbol,
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                xlim = c(-2, 2),
+                ylim = c(0, 8),
+                title = "Volcano plot, comparación 3: ELI vs SFI",
+                subtitle = "Expresión diferencial",
+                labSize = 4.0,
+                pCutoff = 0.05)
+
+png(filename = "./figures/Figure17_Volcano_plot_ELI vs SFI.png")
+EnhancedVolcano(resOrderedDF_ELI_SFI,
+                lab = resOrderedDF_ELI_SFI$symbol,
+                x = 'log2FoldChange',
+                y = 'pvalue',
+                xlim = c(-2, 2),
+                ylim = c(0, 8),
+                title = "Volcano plot, comparación 3: ELI vs SFI",
+                subtitle = "Expresión diferencial",
+                labSize = 4.0,
+                pCutoff = 0.05)
+
+#### Diagrama de Venn 
+library(limma)
+a<-as.matrix(resOrdered_SFI_NIT$pvalue)
+b<-as.matrix(resOrdered_ELI_NIT$pvalue)
+c<-as.matrix(resOrdered_ELI_SFI$pvalue)
+
+decide_all<-cbind(a,b,c) 
+colnames(decide_all)<-c("SFI_vs_NIT","ELI_vs_NIT","ELI_vs_SFI")
+
+res<-decideTests(decide_all, method="separate", adjust.method="fdr", p.value=0.1, lfc=1)
+sum.res.rows<-apply(abs(res),1,sum)
+res.selected<-res[sum.res.rows!=0,] 
+print(summary(res))
+
+vennDiagram(res.selected[,1:3], cex=0.9)
+
+png(filename = "./figures/Figure18_vennDiagram.png")
+vennDiagram(res.selected[,1:3], cex=0.9)
+
+#### Función degPatterns del paquete DEGreport
+library(DEGreport)
+ma_SFI_NIT = assay(vst(dds))[row.names(res_SFI_NIT)[1:100],]
+pattern_SFI_NIT <- degPatterns(ma_SFI_NIT, metadata=  colData(dds), time = "Group")
+
+png(filename = "./figures/Figure19_pattern.png")
+ma_SFI_NIT = assay(vst(dds))[row.names(res_SFI_NIT)[1:100],]
+pattern_SFI_NIT <- degPatterns(ma_SFI_NIT, metadata=  colData(dds), time = "Group")
+
+### Análisis de significación biológica ("Gene Enrichment Analysis")
+library(clusterProfiler)
+
+#### Comparación 1: SFI vs NIT
+
+OrgDb <- org.Hs.eg.db 
+
+geneList_SFI_NIT <- as.vector(resOrderedDF_SFI_NIT$log2FoldChange)
+names(geneList_SFI_NIT) <- resOrderedDF_SFI_NIT$entrez
+gene_SFI_NIT <- na.omit(resOrderedDF_SFI_NIT$entrez)
+
+# Enrichment analysis
+ego_SFI_NIT <- clusterProfiler::enrichGO(gene          = gene_SFI_NIT,
+                                         OrgDb         = OrgDb,
+                                         ont           = "BP",
+                                         pAdjustMethod = "BH",
+                                         pvalueCutoff  = 0.05,
+                                         qvalueCutoff  = 0.05, 
+                                         readable      = TRUE)
+#head(summary(ego_SFI_NIT)[,-8])
+
+# guardando el resultado enrichment en el directorio como un csv
+write.csv(as.data.frame(ego_SFI_NIT), 
+          file =paste0("./results/","CusterProfiler.Results.SFI_NIT.csv"), 
+          row.names = FALSE)
+
+Tab.react1 <- read.csv2(file.path("./results/CusterProfiler.Results.SFI_NIT.csv"), 
+                        sep = ",", header = TRUE, row.names = 1)
+
+Tab.react1 <- Tab.react1[1:5, 1:5]
+knitr::kable(Tab.react1, booktabs = TRUE,
+             caption = "First rows and columns for ClusterProfiler results on SFI vs NIT comparison")
+
+barplot_SFI_NIT<-barplot(ego_SFI_NIT, showCategory=25)
+barplot_SFI_NIT
+
+png(filename = "./figures/Figure20_boxplot_comp1.png")
+barplot_SFI_NIT<-barplot(ego_SFI_NIT, showCategory=25)
+barplot_SFI_NIT
+
+emapplot(ego_SFI_NIT,pie="count", pie_scale=1.5, layout="nicely",
+         color = "p.adjust",showCategory = 20) + ggtitle("Enrichplot para los términos GO entre SFI y NIT.")
+
+png(filename = "./figures/Figure21_emapplot_comp1.png")
+emapplot(ego_SFI_NIT,pie="count", pie_scale=1.5, 
+         layout="nicely",color = "p.adjust",showCategory = 20) + 
+  ggtitle("Enrichplot para los términos GO entre SFI y NIT.")
+
+#### Comparación 2: ELI vs NIT
+OrgDb <- org.Hs.eg.db 
+
+geneList_ELI_NIT <- as.vector(resOrderedDF_ELI_NIT$log2FoldChange)
+names(geneList_ELI_NIT) <- resOrderedDF_ELI_NIT$entrez
+gene_ELI_NIT <- na.omit(resOrderedDF_ELI_NIT$entrez)
+
+# Enrichment analysis
+ego_ELI_NIT <- clusterProfiler::enrichGO(gene          = gene_ELI_NIT,
+                                         OrgDb         = OrgDb,
+                                         ont           = "BP",
+                                         pAdjustMethod = "BH",
+                                         pvalueCutoff  = 0.05,
+                                         qvalueCutoff  = 0.05, 
+                                         readable      = TRUE)
+#head(summary(ego_ELI_NIT)[,-8])
+
+# guardando el resultado enrichment en el directorio como un csv
+write.csv(as.data.frame(ego_ELI_NIT), 
+          file =paste0("./results/","CusterProfiler.Results.ELI_NIT.csv"), 
+          row.names = FALSE)
+
+Tab.react2 <- read.csv2(file.path("./results/CusterProfiler.Results.ELI_NIT.csv"), 
+                        sep = ",", header = TRUE, row.names = 1)
+
+Tab.react2 <- Tab.react2[1:5, 1:5]
+knitr::kable(Tab.react2, booktabs = TRUE, 
+             caption = "First rows and columns for ClusterProfiler results on ELI vs NIT comparison")
+
+barplot_ELI_NIT<-barplot(ego_ELI_NIT, showCategory=25)
+barplot_ELI_NIT
+
+png(filename = "./figures/Figure22_boxplot_comp2.png")
+barplot_ELI_NIT<-barplot(ego_ELI_NIT, showCategory=25)
+barplot_ELI_NIT
+
+emapplot(ego_ELI_NIT,pie="count", pie_scale=1.5, layout="nicely",
+         color = "p.adjust",showCategory = 20) + ggtitle("Enrichplot para los términos GO entre ELI y NIT.")
+
+png(filename = "./figures/Figure23_emapplot_comp2.png")
+emapplot(ego_ELI_NIT,pie="count", pie_scale=1.5, layout="nicely",
+         color = "p.adjust",showCategory = 20) + ggtitle("Enrichplot para los términos GO entre ELI y NIT.")
+
+#### Comparación 3: ELI vs SFI
+OrgDb <- org.Hs.eg.db 
+
+geneList_ELI_SFI <- as.vector(resOrderedDF_ELI_SFI$log2FoldChange)
+names(geneList_ELI_SFI) <- resOrderedDF_ELI_SFI$entrez
+gene_ELI_SFI <- na.omit(resOrderedDF_ELI_SFI$entrez)
+
+# Enrichment analysis
+ego_ELI_SFI <- clusterProfiler::enrichGO(gene          = gene_ELI_SFI,
+                                         OrgDb         = OrgDb,
+                                         ont           = "BP",
+                                         pAdjustMethod = "BH",
+                                         pvalueCutoff  = 0.05,
+                                         qvalueCutoff  = 0.05, 
+                                         readable      = TRUE)
+#head(summary(ego_ELI_SFI)[,-8])
+
+# guardando el resultado enrichment en el directorio como un csv
+write.csv(as.data.frame(ego_ELI_SFI), 
+          file =paste0("./results/","CusterProfiler.Results.ELI_SFI.csv"), 
+          row.names = FALSE)
+
+Tab.react3 <- read.csv2(file.path("./results/CusterProfiler.Results.ELI_SFI.csv"), 
+                        sep = ",", header = TRUE, row.names = 1)
+
+Tab.react3 <- Tab.react3[1:5, 1:5]
+knitr::kable(Tab.react3, booktabs = TRUE, 
+             caption = "First rows and columns for ClusterProfiler results on ELI vs SFI comparison")
+
+barplot_ELI_SFI<-barplot(ego_ELI_SFI, showCategory=25)
+barplot_ELI_SFI
+png(filename = "./figures/Figure24_boxplot_comp3.png")
+barplot_ELI_SFI<-barplot(ego_ELI_SFI, showCategory=25)
+barplot_ELI_SFI
+emapplot(ego_ELI_SFI,pie="count", pie_scale=1.5, layout="nicely",
+         color = "p.adjust",showCategory = 20) + ggtitle("Enrichplot para los términos GO entre ELI y SFI.")
+
+png(filename = "./figures/Figure25_emapplot_comp3.png")
+emapplot(ego_ELI_SFI,pie="count", pie_scale=1.5, layout="nicely",color = "p.adjust",showCategory = 20) + 
+  ggtitle("Enrichplot para los términos GO entre ELI y SFI.")
+```
+
+# References
+
+
+
+
+
+
+
+
+
+
+
